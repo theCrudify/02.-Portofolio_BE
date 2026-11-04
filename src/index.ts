@@ -1,18 +1,22 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
+import { getDb } from '@/db/client';
 import { bodyLimitMiddleware } from '@/middleware/body-limit';
 import { csrfMiddleware } from '@/middleware/csrf';
 import { errorHandler, notFoundHandler } from '@/middleware/error';
 import { requestIdMiddleware } from '@/middleware/request-id';
-import { registerDocsRoutes } from '@/routes/docs';
+import adminAnalytics from '@/routes/admin/analytics';
+import adminMedia from '@/routes/admin/media';
 import adminResources from '@/routes/admin/resources';
 import { adminUsersRoute } from '@/routes/admin/users';
 import { authRoute } from '@/routes/auth';
+import { registerDocsRoutes } from '@/routes/docs';
+import { eventsAndContactRoute } from '@/routes/events';
 import { healthRoute } from '@/routes/health';
 import { publicRoute } from '@/routes/public';
+import { runNightlyCron } from '@/services/analytics.service';
 import type { AppEnv, Bindings } from '@/types/env';
-
 
 export function createApp(): OpenAPIHono<AppEnv> {
   const app = new OpenAPIHono<AppEnv>({
@@ -66,11 +70,13 @@ export function createApp(): OpenAPIHono<AppEnv> {
   // Routes
   app.route('/', healthRoute);
   app.route('/v1', publicRoute);
+  app.route('/', eventsAndContactRoute);
   app.route('/v1/auth', authRoute);
   app.route('/v1/admin/users', adminUsersRoute);
+  app.route('/', adminMedia);
+  app.route('/', adminAnalytics);
   app.route('/', adminResources);
   registerDocsRoutes(app);
-
 
   return app;
 }
@@ -79,10 +85,11 @@ export const app = createApp();
 
 export async function scheduled(
   _event: ScheduledEvent,
-  _env: Bindings,
+  env: Bindings,
   _ctx: ExecutionContext,
 ): Promise<void> {
-  // Populated in T11
+  const db = getDb(env);
+  await runNightlyCron(db, env);
 }
 
 export default {
