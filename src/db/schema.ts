@@ -684,6 +684,24 @@ export const achievements = pgTable(
   (t) => [index('achievements_status_idx').on(t.statusId, t.sortOrder)],
 );
 
+export const achievementPoints = pgTable(
+  'achievement_points',
+  {
+    id: id(),
+    achievementId: parentRef('achievement_id', () => achievements.id),
+    ...bulletColumns,
+    ...timestamps,
+  },
+  (t) => [index('achievement_points_ach_idx').on(t.achievementId, t.sortOrder)],
+);
+export const achievementLinks = linkTable('achievement_links', 'achievement_id', () => achievements.id);
+export const achievementMedia = mediaTable('achievement_media', 'achievement_id', () => achievements.id);
+export const achievementTechnologies = techTable(
+  'achievement_technologies',
+  'achievement_id',
+  () => achievements.id,
+);
+
 export const publications = pgTable(
   'publications',
   {

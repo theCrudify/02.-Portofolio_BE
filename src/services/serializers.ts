@@ -447,7 +447,7 @@ export function toActivity(row: ActivityRow, ctx: SerializeContext, extras: RawE
   };
 }
 
-export function toAchievement(row: AchievementRow, ctx: SerializeContext) {
+export function toAchievement(row: AchievementRow, ctx: SerializeContext, extras: RawExtras) {
   return {
     id: row.id,
     title: pickLocale(row, 'title', ctx.locale) ?? row.titleEn,
@@ -458,6 +458,7 @@ export function toAchievement(row: AchievementRow, ctx: SerializeContext) {
     description: pickLocale(row, 'description', ctx.locale),
     certificate: imageOf(ctx, row.certificateMediaId),
     linkUrl: row.linkUrl ?? null,
+    ...toExtras(ctx, row.id, extras),
   };
 }
 

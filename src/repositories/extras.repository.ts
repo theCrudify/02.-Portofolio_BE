@@ -22,6 +22,13 @@ const TABLES = {
     links: schema.certificationLinks,
     media: schema.certificationMedia,
   },
+  achievement: {
+    achievements: schema.achievementPoints,
+    achievementParent: schema.achievementPoints.achievementId,
+    techs: schema.achievementTechnologies,
+    links: schema.achievementLinks,
+    media: schema.achievementMedia,
+  },
   activity: {
     achievements: schema.activityAchievements,
     achievementParent: schema.activityAchievements.activityId,

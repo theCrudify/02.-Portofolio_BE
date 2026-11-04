@@ -2,7 +2,11 @@ import type { ZodTypeAny } from 'zod';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import type { LookupGroupCode } from '../db/queries/lookups';
 import {
+  achievementLinks,
+  achievementMedia,
+  achievementPoints,
   achievements,
+  achievementTechnologies,
   activities,
   activityAchievements,
   activityLinks,
@@ -270,6 +274,13 @@ export const RESOURCE_REGISTRY: Record<ResourceName, ResourceConfig> = {
     table: achievements,
     createSchema: achievementSchema,
     updateSchema: updateSchemas.achievements,
+    children: portfolioExtras(
+      achievementPoints,
+      'achievementId',
+      achievementLinks,
+      achievementMedia,
+      achievementTechnologies,
+    ),
     searchKeys: ['titleEn', 'titleId', 'eventName', 'rank'],
     revalidateTags: () => ['site'],
   },

@@ -243,6 +243,10 @@ const achievementFields = {
   certificateMediaId: optUuid,
   linkUrl: optUrl,
   sortOrder,
+  achievements: childSchemas.achievements.optional(),
+  technologies: childSchemas.technologyIds.optional(),
+  links: childSchemas.links.optional(),
+  media: childSchemas.attachments.optional(),
 };
 export const achievementSchema = z.object(achievementFields);
 

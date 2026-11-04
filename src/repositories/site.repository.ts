@@ -40,6 +40,7 @@ export interface RawSiteData {
   eduActivityRows: Row<typeof schema.educationActivities>[];
   certExtras: RawExtras;
   activityExtras: RawExtras;
+  achievementExtras: RawExtras;
 }
 
 export interface ISiteRepository {
@@ -119,6 +120,7 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       eduActivityRows,
       certExtras,
       activityExtras,
+      achievementExtras,
     ] = await Promise.all([
       projectIds.length
         ? db.select().from(schema.projectTechnologies).where(inArray(schema.projectTechnologies.projectId, projectIds))
@@ -160,6 +162,7 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
         : none,
       fetchExtras(db, 'certification', certRows.map((c) => c.id)),
       fetchExtras(db, 'activity', activityIds),
+      fetchExtras(db, 'achievement', achievementRows.map((a) => a.id)),
     ]);
 
     return {
@@ -193,6 +196,7 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       eduActivityRows,
       certExtras,
       activityExtras,
+      achievementExtras,
     };
   }
 }

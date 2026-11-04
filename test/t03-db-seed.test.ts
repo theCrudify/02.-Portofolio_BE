@@ -56,6 +56,10 @@ describe('T03 · Database Schema, Password PBKDF2, Common Queries & Seed', () =>
       'activity_media',
       'activity_technologies',
       'achievements',
+      'achievement_points',
+      'achievement_links',
+      'achievement_media',
+      'achievement_technologies',
       'publications',
       'testimonials',
       'documents',
@@ -73,7 +77,7 @@ describe('T03 · Database Schema, Password PBKDF2, Common Queries & Seed', () =>
       .filter((v): v is PgTable => is(v, PgTable))
       .map((t) => getTableName(t));
 
-    expect(actualTableNames).toHaveLength(50);
+    expect(actualTableNames).toHaveLength(54);
     expect([...actualTableNames].sort()).toEqual([...expectedTableNames].sort());
   });
 
