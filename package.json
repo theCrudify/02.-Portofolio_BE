@@ -1,0 +1,41 @@
+{
+  "name": "portfolio-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx scripts/seed.ts",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "^0.19.0",
+    "@neondatabase/serverless": "^0.10.4",
+    "@scalar/hono-api-reference": "^0.8.0",
+    "drizzle-orm": "^0.39.0",
+    "hono": "^4.7.0",
+    "uuidv7": "^1.0.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.7.2",
+    "@cloudflare/workers-types": "^4.20250204.0",
+    "@eslint/js": "^9.20.0",
+    "@types/node": "^22.13.0",
+    "drizzle-kit": "^0.30.4",
+    "eslint": "^9.20.0",
+    "prettier": "^3.5.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "~3.0.5",
+    "wrangler": "^3.109.0"
+  }
+}
+
