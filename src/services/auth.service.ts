@@ -188,6 +188,10 @@ export async function setup2faForUser(
   user: AuthUser,
   jwtSecret: string,
 ): Promise<{ secret: string; otpauthUrl: string }> {
+  // Re-running setup would replace the active secret and switch 2FA off without code/password.
+  if (user.totpEnabled) {
+    throw conflict('2FA is already enabled. Disable it first.');
+  }
   const secret = generateTotpSecret();
   const encrypted = await encryptTotpSecret(secret, jwtSecret);
 

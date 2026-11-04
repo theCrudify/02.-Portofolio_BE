@@ -1,13 +1,17 @@
-import { desc, eq, gte, lt } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import type { Database } from '../db/client';
-import { dailyStats, events, githubCache, messages } from '../db/schema';
+import { dailyStats, events, githubCache, loginAttempts, messages, shareLinks } from '../db/schema';
+import { revalidate } from '../lib/revalidate';
 import type { Env } from '../types/env';
 
 export async function aggregateEventsForDate(db: Database, dateStr: string) {
   const start = new Date(`${dateStr}T00:00:00.000Z`);
   const end = new Date(`${dateStr}T23:59:59.999Z`);
 
-  const allEvents = await db.select().from(events);
+  const allEvents = await db
+    .select()
+    .from(events)
+    .where(and(gte(events.createdAt, start), lte(events.createdAt, end)));
   const dayEvents = allEvents.filter((ev) => {
     const t = ev.createdAt instanceof Date ? ev.createdAt.getTime() : new Date(String(ev.createdAt)).getTime();
     return t >= start.getTime() && t <= end.getTime();
@@ -65,6 +69,36 @@ export async function aggregateEventsForDate(db: Database, dateStr: string) {
   return { date: dateStr, aggregatedGroups: toInsert.length, totalEvents: dayEvents.length };
 }
 
+interface GithubUser {
+  public_repos?: number;
+  followers?: number;
+}
+interface GithubRepo {
+  fork?: boolean;
+  stargazers_count?: number;
+  language?: string | null;
+}
+
+// Shape of github_cache.data (key = 'stats') per 02-DATABASE-SCHEMA.md
+export function buildGithubStats(user: GithubUser, repos: GithubRepo[]) {
+  const own = repos.filter((r) => !r.fork);
+  const langCount = new Map<string, number>();
+  for (const r of own) {
+    if (r.language) langCount.set(r.language, (langCount.get(r.language) ?? 0) + 1);
+  }
+  const withLang = [...langCount.values()].reduce((a, b) => a + b, 0);
+  const topLanguages = [...langCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, n]) => ({ name, percent: Math.round((n / withLang) * 100) }));
+  return {
+    publicRepos: user.public_repos ?? 0,
+    followers: user.followers ?? 0,
+    totalStars: own.reduce((sum, r) => sum + (r.stargazers_count ?? 0), 0),
+    topLanguages,
+  };
+}
+
 export async function runNightlyCron(db: Database, env: Env, referenceNow = new Date()) {
   const yesterday = new Date(referenceNow.getTime() - 24 * 60 * 60 * 1000)
     .toISOString()
@@ -74,6 +108,14 @@ export async function runNightlyCron(db: Database, env: Env, referenceNow = new 
   // Prune raw events older than 90 days
   const cutoff90d = new Date(referenceNow.getTime() - 90 * 24 * 60 * 60 * 1000);
   await db.delete(events).where(lt(events.createdAt, cutoff90d));
+
+  const cutoff7d = new Date(referenceNow.getTime() - 7 * 24 * 60 * 60 * 1000);
+  await db.delete(loginAttempts).where(lt(loginAttempts.createdAt, cutoff7d));
+
+  await db
+    .update(shareLinks)
+    .set({ isActive: false })
+    .where(and(eq(shareLinks.isActive, true), lt(shareLinks.expiresAt, referenceNow)));
 
   // Refresh GitHub cache if configured
   if (env.GITHUB_USERNAME) {
@@ -85,18 +127,22 @@ export async function runNightlyCron(db: Database, env: Env, referenceNow = new 
       if (env.GITHUB_TOKEN) {
         headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
       }
-      const res = await fetch(
-        `https://api.github.com/users/${encodeURIComponent(env.GITHUB_USERNAME)}`,
-        { headers }
-      );
-      if (res.ok) {
-        const profileData = (await res.json()) as Record<string, unknown>;
-        await db.delete(githubCache).where(eq(githubCache.key, 'summary'));
-        await db.insert(githubCache).values({
-          key: 'summary',
-          data: profileData,
-          fetchedAt: new Date(),
-        });
+      const user = encodeURIComponent(env.GITHUB_USERNAME);
+      const [userRes, reposRes] = await Promise.all([
+        fetch(`https://api.github.com/users/${user}`, { headers }),
+        fetch(`https://api.github.com/users/${user}/repos?per_page=100&type=owner`, { headers }),
+      ]);
+      if (userRes.ok && reposRes.ok) {
+        const stats = buildGithubStats(
+          (await userRes.json()) as GithubUser,
+          (await reposRes.json()) as GithubRepo[]
+        );
+        const [existing] = await db.select().from(githubCache).where(eq(githubCache.key, 'stats'));
+        await db.delete(githubCache).where(eq(githubCache.key, 'stats'));
+        await db.insert(githubCache).values({ key: 'stats', data: stats, fetchedAt: new Date() });
+        if (JSON.stringify(existing?.data) !== JSON.stringify(stats)) {
+          await revalidate(env, ['site']);
+        }
       }
     } catch {
       // Ignore network errors during GitHub cache refresh

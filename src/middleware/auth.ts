@@ -4,7 +4,7 @@ import { createMiddleware } from 'hono/factory';
 import { getDb } from '@/db/client';
 import * as schema from '@/db/schema';
 import { unauthenticated } from '@/lib/errors';
-import { verifySession } from '@/lib/jwt';
+import { getJwtSecret, verifySession } from '@/lib/jwt';
 import type { AppEnv, AuthUser } from '@/types/env';
 
 export const SESSION_COOKIE_NAME = 'pf_session';
@@ -46,7 +46,7 @@ export async function resolveAuthUser(
 
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   const token = getCookie(c, SESSION_COOKIE_NAME);
-  const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+  const jwtSecret = getJwtSecret(c.env);
   const db = getDb(c.env);
 
   const user = await resolveAuthUser(token, jwtSecret, db);

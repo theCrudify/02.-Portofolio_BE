@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import { documents, events, exportPresets, media, shareLinks } from '../db/schema';
 import { AppError } from '../lib/errors';
-import { visitorHash } from '../lib/hash';
+import { getHashSalt, visitorHash } from '../lib/hash';
 import { parseLocale } from '../lib/locale';
 import { ok } from '../lib/response';
 import { buildExport, buildJsonResume, type ExportPresetRow } from '../services/export.service';
@@ -104,7 +104,7 @@ documentsExportRoute.get('/v1/share/:token', async (c) => {
     c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? '127.0.0.1';
   const ua = c.req.header('user-agent') ?? '';
   const utcDate = now.toISOString().slice(0, 10);
-  const vHash = await visitorHash(rawIp, ua, utcDate, c.env?.HASH_SALT || 'dev-hash-salt');
+  const vHash = await visitorHash(rawIp, ua, utcDate, getHashSalt(c.env));
 
   await db.insert(events).values({
     type: 'share_open',

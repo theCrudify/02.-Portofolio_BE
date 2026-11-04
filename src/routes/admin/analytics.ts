@@ -18,7 +18,7 @@ const patchMessageSchema = z.object({
 
 const adminAnalytics = new OpenAPIHono<AppBindings>();
 
-adminAnalytics.get('/v1/admin/analytics', requireRole('owner', 'editor'), async (c) => {
+adminAnalytics.get('/v1/admin/analytics', requireRole('viewer'), async (c) => {
   const rangeParam = c.req.query('range');
   const range =
     rangeParam === '7d' || rangeParam === '30d' || rangeParam === '90d' ? rangeParam : '30d';
@@ -27,7 +27,7 @@ adminAnalytics.get('/v1/admin/analytics', requireRole('owner', 'editor'), async 
   return ok(c, data);
 });
 
-adminAnalytics.get('/v1/admin/messages', requireRole('owner', 'editor'), async (c) => {
+adminAnalytics.get('/v1/admin/messages', requireRole('viewer'), async (c) => {
   const db = getDb(c.env);
   const rows = await listAdminMessages(db);
   return ok(c, rows);

@@ -66,7 +66,10 @@ export async function signUpload(env: Env, kind: UploadKind, timestamp?: number)
   }
 
   const ts = timestamp ?? Math.floor(Date.now() / 1000);
-  const secret = env.CLOUDINARY_API_SECRET || 'dev-cloudinary-secret';
+  const secret = env.CLOUDINARY_API_SECRET;
+  if (!secret || !env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY) {
+    throw new AppError(500, 'INTERNAL_ERROR', 'Server misconfigured');
+  }
   const signature = await signCloudinaryParams(
     {
       folder: rule.folder,
@@ -76,8 +79,8 @@ export async function signUpload(env: Env, kind: UploadKind, timestamp?: number)
   );
 
   return {
-    cloudName: env.CLOUDINARY_CLOUD_NAME || 'demo',
-    apiKey: env.CLOUDINARY_API_KEY || 'demo-key',
+    cloudName: env.CLOUDINARY_CLOUD_NAME,
+    apiKey: env.CLOUDINARY_API_KEY,
     timestamp: ts,
     folder: rule.folder,
     resourceType: rule.resourceType,

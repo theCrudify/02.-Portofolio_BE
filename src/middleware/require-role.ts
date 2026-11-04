@@ -1,4 +1,5 @@
 import { getCookie } from 'hono/cookie';
+import { getJwtSecret } from '@/lib/jwt';
 import { createMiddleware } from 'hono/factory';
 import { getDb } from '@/db/client';
 import { forbidden, unauthenticated } from '@/lib/errors';
@@ -29,7 +30,7 @@ export function requireRole(...roles: UserRole[]) {
       if (!token) {
         throw unauthenticated('Authentication required');
       }
-      const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+      const jwtSecret = getJwtSecret(c.env);
       const db = getDb(c.env);
       user = (await resolveAuthUser(token, jwtSecret, db)) ?? undefined;
       if (user) {

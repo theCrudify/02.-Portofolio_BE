@@ -2,7 +2,8 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { getDb } from '@/db/client';
 import { AppError, unauthenticated } from '@/lib/errors';
-import { ipHash } from '@/lib/hash';
+import { getHashSalt, ipHash } from '@/lib/hash';
+import { getJwtSecret } from '@/lib/jwt';
 import { fail, ok } from '@/lib/response';
 import {
   PRE_2FA_COOKIE_NAME,
@@ -65,8 +66,8 @@ authRoute.openapi(postLoginRoute, async (c) => {
   const { email, password } = c.req.valid('json');
   const db = getDb(c.env);
   const clientIp = c.req.header('cf-connecting-ip') || '127.0.0.1';
-  const salt = c.env?.HASH_SALT || 'dev-hash-salt';
-  const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+  const salt = getHashSalt(c.env);
+  const jwtSecret = getJwtSecret(c.env);
   const hashedIp = await ipHash(clientIp, salt);
 
   try {
@@ -143,7 +144,7 @@ authRoute.openapi(post2faVerifyRoute, async (c) => {
   }
 
   const db = getDb(c.env);
-  const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+  const jwtSecret = getJwtSecret(c.env);
   const result = await verifyLogin2fa(db, {
     pre2faToken,
     code,
@@ -208,7 +209,7 @@ authRoute.get('/me', requireAuth, (c) => {
 authRoute.post('/2fa/setup', requireAuth, async (c) => {
   const user = c.get('user')!;
   const db = getDb(c.env);
-  const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+  const jwtSecret = getJwtSecret(c.env);
   const result = await setup2faForUser(db, user, jwtSecret);
   return ok(c, result);
 });
@@ -217,7 +218,7 @@ authRoute.post('/2fa/enable', requireAuth, async (c) => {
   const body = enable2faBodySchema.parse(await c.req.json());
   const user = c.get('user')!;
   const db = getDb(c.env);
-  const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+  const jwtSecret = getJwtSecret(c.env);
   await enable2faForUser(db, user, body.code, jwtSecret);
   return ok(c, { ok: true });
 });
@@ -226,7 +227,7 @@ authRoute.post('/2fa/disable', requireAuth, async (c) => {
   const body = disable2faBodySchema.parse(await c.req.json());
   const user = c.get('user')!;
   const db = getDb(c.env);
-  const jwtSecret = c.env?.JWT_SECRET || 'dev-jwt-secret-min-32-chars-long';
+  const jwtSecret = getJwtSecret(c.env);
   await disable2faForUser(db, user, {
     code: body.code,
     password: body.password,

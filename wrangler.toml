@@ -6,3 +6,6 @@ compatibility_flags = ["nodejs_compat"]
 [placement]
 mode = "smart"
 
+
+[triggers]
+crons = ["10 0 * * *"]

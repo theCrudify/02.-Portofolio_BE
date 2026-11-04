@@ -1,6 +1,15 @@
 import { sign, verify } from 'hono/jwt';
-import { unauthenticated } from '@/lib/errors';
+import { AppError, unauthenticated } from '@/lib/errors';
 import type { UserRole } from '@/types/env';
+
+// No fallback: a default secret would let anyone forge sessions if the env var is missing.
+export function getJwtSecret(env: { JWT_SECRET?: string } | undefined): string {
+  const secret = env?.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new AppError(500, 'INTERNAL_ERROR', 'Server misconfigured');
+  }
+  return secret;
+}
 
 export interface SessionJwtPayload {
   sub: string;

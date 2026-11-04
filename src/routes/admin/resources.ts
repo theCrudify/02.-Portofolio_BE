@@ -41,19 +41,19 @@ import type { AppBindings } from '../../types/env';
 
 const adminResources = new OpenAPIHono<AppBindings>();
 
-adminResources.get('/v1/admin/dashboard', requireRole('owner', 'editor'), async (c) => {
+adminResources.get('/v1/admin/dashboard', requireRole('viewer'), async (c) => {
   const db = getDb(c.env);
   const summary = await getAdminDashboardSummary(db);
   return ok(c, summary);
 });
 
-adminResources.get('/v1/admin/profile', requireRole('owner', 'editor'), async (c) => {
+adminResources.get('/v1/admin/profile', requireRole('viewer'), async (c) => {
   const db = getDb(c.env);
   const data = await getAdminProfile(db);
   return ok(c, data);
 });
 
-adminResources.put('/v1/admin/profile', requireRole('owner'), async (c) => {
+adminResources.put('/v1/admin/profile', requireRole('editor'), async (c) => {
   const body = await c.req.json();
   const parsed = profileUpdateSchema.safeParse(body);
   if (!parsed.success) {
@@ -70,7 +70,7 @@ adminResources.put('/v1/admin/profile', requireRole('owner'), async (c) => {
   return ok(c, updated);
 });
 
-adminResources.get('/v1/admin/settings', requireRole('owner', 'editor'), async (c) => {
+adminResources.get('/v1/admin/settings', requireRole('viewer'), async (c) => {
   const db = getDb(c.env);
   const data = await getAdminSiteSettings(db);
   return ok(c, data);
@@ -156,7 +156,7 @@ adminResources.put(
 for (const resource of Object.keys(RESOURCE_REGISTRY) as ResourceName[]) {
   const config = RESOURCE_REGISTRY[resource];
 
-  adminResources.patch(`/v1/admin/${resource}/reorder`, requireRole('owner'), async (c) => {
+  adminResources.put(`/v1/admin/${resource}/reorder`, requireRole('editor'), async (c) => {
     const body = await c.req.json();
     const parsed = reorderSchema.safeParse(body);
     if (!parsed.success) {
@@ -164,13 +164,14 @@ for (const resource of Object.keys(RESOURCE_REGISTRY) as ResourceName[]) {
     }
     const db = getDb(c.env);
     const user = c.get('user')!;
-    await reorderResource(db, c.env, user, config, parsed.data.items);
-    return ok(c, { reordered: parsed.data.items.length });
+    await reorderResource(db, c.env, user, config, parsed.data.ids);
+    return ok(c, { reordered: parsed.data.ids.length });
   });
 
-  adminResources.get(`/v1/admin/${resource}`, requireRole('owner', 'editor'), async (c) => {
+  adminResources.get(`/v1/admin/${resource}`, requireRole('viewer'), async (c) => {
     const status = c.req.query('status') as ContentStatus | undefined;
-    const includeDeleted = c.req.query('includeDeleted') === 'true';
+    const includeDeleted =
+      c.req.query('includeDeleted') === 'true' && c.get('user')?.role === 'owner';
     const page = Number(c.req.query('page') ?? 1);
     const limit = Number(c.req.query('limit') ?? 50);
 
@@ -202,7 +203,7 @@ for (const resource of Object.keys(RESOURCE_REGISTRY) as ResourceName[]) {
     return ok(c, created, undefined, 201);
   });
 
-  adminResources.get(`/v1/admin/${resource}/:id`, requireRole('owner', 'editor'), async (c) => {
+  adminResources.get(`/v1/admin/${resource}/:id`, requireRole('viewer'), async (c) => {
     const id = c.req.param('id');
     const db = getDb(c.env);
     const item = await getResourceById(db, config, id);
@@ -234,7 +235,7 @@ for (const resource of Object.keys(RESOURCE_REGISTRY) as ResourceName[]) {
     return ok(c, updated);
   });
 
-  adminResources.delete(`/v1/admin/${resource}/:id`, requireRole('owner'), async (c) => {
+  adminResources.delete(`/v1/admin/${resource}/:id`, requireRole('editor'), async (c) => {
     const id = c.req.param('id');
     const db = getDb(c.env);
     const user = c.get('user')!;

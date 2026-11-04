@@ -9,15 +9,11 @@ const httpsUrl = z
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
 
 export const reorderSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        id: z.string().uuid(),
-        sortOrder: z.number().int().min(0),
-      })
-    )
+  ids: z
+    .array(z.string().uuid())
     .min(1)
-    .max(200),
+    .max(200)
+    .refine((ids) => new Set(ids).size === ids.length, 'Duplicate ids'),
 });
 
 export const projectCreateSchema = z

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTableName } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import { app } from '@/index';
@@ -152,6 +152,14 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
   });
 
   it('handles contact form honeypot silently, rejects invalid Turnstile token with 403, and saves valid messages', async () => {
+    // Stub Cloudflare siteverify: only 'valid-dev-token' passes; other outbound calls (Resend) succeed.
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (String(url).includes('turnstile/v0/siteverify')) {
+        const token = new URLSearchParams(String(init?.body)).get('response');
+        return new Response(JSON.stringify({ success: token === 'valid-dev-token' }));
+      }
+      return new Response('{}');
+    });
     // Honeypot filled -> 200 OK without storing
     const honeyRes = await app.request(
       '/v1/contact',
@@ -208,6 +216,27 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
     );
     expect(okRes.status).toBe(201);
     expect(store.messages.length).toBe(1);
+
+    // siteverify unreachable -> fail closed
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('network down');
+    });
+    const downRes = await app.request(
+      '/v1/contact',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Real Person',
+          email: 'person@example.com',
+          body: 'Hello, I would like to discuss a backend engineering role.',
+          turnstileToken: 'valid-dev-token',
+        }),
+      },
+      env
+    );
+    expect(downRes.status).toBe(403);
+    vi.unstubAllGlobals();
   });
 
   it('aggregates daily events idempotently with accurate count and uniqueVisitors', async () => {

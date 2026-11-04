@@ -253,7 +253,7 @@ adminMedia.post('/v1/admin/media/embed', requireRole('owner', 'editor'), async (
   return ok(c, created, undefined, 201);
 });
 
-adminMedia.get('/v1/admin/media', requireRole('owner', 'editor'), async (c) => {
+adminMedia.get('/v1/admin/media', requireRole('viewer'), async (c) => {
   const rawKind = c.req.query('kind');
   const dbKind: 'image' | 'video' | 'pdf' | undefined =
     rawKind === 'document' || rawKind === 'pdf'

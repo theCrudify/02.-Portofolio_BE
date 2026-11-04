@@ -294,6 +294,9 @@ export async function softDeleteResource(
   id: string
 ): Promise<void> {
   const existing = await getResourceById(db, config, id);
+  if (user.role === 'editor' && existing.status !== 'draft') {
+    throw new AppError(403, 'FORBIDDEN', 'Editors can only delete items that are in draft status.');
+  }
   await db
     .update(config.table)
     .set({
@@ -349,21 +352,20 @@ export async function reorderResource(
   env: Env,
   user: AuthUser,
   config: ResourceConfig,
-  items: { id: string; sortOrder: number }[]
+  ids: string[]
 ): Promise<void> {
   const now = new Date();
-  for (const entry of items) {
-    await db
-      .update(config.table)
-      .set({ sortOrder: entry.sortOrder, updatedAt: now })
-      .where(eq(config.table.id, entry.id));
-  }
+  // sort_order = index in the submitted list; batch runs as one transaction on neon-http
+  const updates = ids.map((id, index) =>
+    db.update(config.table).set({ sortOrder: index, updatedAt: now }).where(eq(config.table.id, id))
+  );
+  await db.batch(updates as [(typeof updates)[number], ...(typeof updates)[number][]]);
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'reorder',
     resource: config.name,
-    summary: `Reordered ${items.length} items`,
+    summary: `Reordered ${ids.length} items`,
   });
 
   await revalidate(env, config.revalidateTags());

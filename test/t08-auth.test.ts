@@ -82,6 +82,12 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
   const ownerId = '01950000-0000-7000-8000-000000000001';
   const editorId = '01950000-0000-7000-8000-000000000002';
   const jwtSecret = 'dev-jwt-secret-min-32-chars-long';
+  const env = {
+    JWT_SECRET: jwtSecret,
+    HASH_SALT: 'salt',
+    FRONTEND_URL: 'http://localhost:3000',
+  };
+  const request = (path: string, init: RequestInit) => app.request(path, init, env);
 
   beforeEach(async () => {
     clearMemoryRateLimits();
@@ -152,7 +158,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
 
   it('blocks 6th failed login attempt within 15 minutes with 429 RATE_LIMITED', async () => {
     for (let i = 1; i <= 5; i++) {
-      const res = await app.request('/v1/auth/login', {
+      const res = await request('/v1/auth/login', {
         method: 'POST',
         headers: {
           Origin: 'http://localhost:3000',
@@ -167,7 +173,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
       expect(res.status).toBe(401);
     }
 
-    const sixthRes = await app.request('/v1/auth/login', {
+    const sixthRes = await request('/v1/auth/login', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -186,7 +192,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
 
   it('completes login, 2FA setup & enable, 2FA login challenge, and blocks owner from disabling 2FA', async () => {
     // 1. Login without 2FA
-    const loginRes = await app.request('/v1/auth/login', {
+    const loginRes = await request('/v1/auth/login', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -202,7 +208,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     expect(sessionCookie).toBeTruthy();
 
     // 2. Setup 2FA
-    const setupRes = await app.request('/v1/auth/2fa/setup', {
+    const setupRes = await request('/v1/auth/2fa/setup', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -215,7 +221,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
 
     // 3. Enable 2FA with valid TOTP code
     const code = await generateTotpCode(setupJson.data.secret);
-    const enableRes = await app.request('/v1/auth/2fa/enable', {
+    const enableRes = await request('/v1/auth/2fa/enable', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -227,7 +233,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     expect(enableRes.status).toBe(200);
 
     // 4. Owner cannot disable 2FA
-    const disableRes = await app.request('/v1/auth/2fa/disable', {
+    const disableRes = await request('/v1/auth/2fa/disable', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -239,7 +245,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     expect(disableRes.status).toBe(403);
 
     // 5. Next login requires TOTP (401 TOTP_REQUIRED + pf_2fa cookie)
-    const challengeRes = await app.request('/v1/auth/login', {
+    const challengeRes = await request('/v1/auth/login', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -257,7 +263,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     expect(pre2faCookie).toBeTruthy();
 
     // 6. Verify 2FA completes login
-    const verifyRes = await app.request('/v1/auth/2fa/verify', {
+    const verifyRes = await request('/v1/auth/2fa/verify', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -273,12 +279,12 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
   it('invalidates previous session when logout-all increments token_version', async () => {
     const token = await signSession({ sub: ownerId, role: 'owner', tv: 0 }, jwtSecret);
 
-    const meBefore = await app.request('/v1/auth/me', {
+    const meBefore = await request('/v1/auth/me', {
       headers: { Cookie: `pf_session=${token}` },
     });
     expect(meBefore.status).toBe(200);
 
-    const logoutAllRes = await app.request('/v1/auth/logout-all', {
+    const logoutAllRes = await request('/v1/auth/logout-all', {
       method: 'POST',
       headers: {
         Origin: 'http://localhost:3000',
@@ -288,7 +294,7 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     expect(logoutAllRes.status).toBe(204);
 
     // Old token has tv=0, user in DB now has tokenVersion=1 -> rejected with 401
-    const meAfter = await app.request('/v1/auth/me', {
+    const meAfter = await request('/v1/auth/me', {
       headers: { Cookie: `pf_session=${token}` },
     });
     expect(meAfter.status).toBe(401);
@@ -298,12 +304,12 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     const editorToken = await signSession({ sub: editorId, role: 'editor', tv: 0 }, jwtSecret);
     const ownerToken = await signSession({ sub: ownerId, role: 'owner', tv: 0 }, jwtSecret);
 
-    const editorRes = await app.request('/v1/admin/users', {
+    const editorRes = await request('/v1/admin/users', {
       headers: { Cookie: `pf_session=${editorToken}` },
     });
     expect(editorRes.status).toBe(403);
 
-    const ownerRes = await app.request('/v1/admin/users', {
+    const ownerRes = await request('/v1/admin/users', {
       headers: { Cookie: `pf_session=${ownerToken}` },
     });
     expect(ownerRes.status).toBe(200);

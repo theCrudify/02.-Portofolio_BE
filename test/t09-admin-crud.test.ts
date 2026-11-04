@@ -77,6 +77,10 @@ function createCrudMockDb(store: CrudStore): DbClient {
         },
       }),
     }),
+    batch: async (queries: Promise<unknown>[]) => {
+      store.__batches = [...(store.__batches ?? []), { size: queries.length }];
+      return Promise.all(queries);
+    },
     delete: (table: unknown) => ({
       where: () => {
         const name = getTableName(table as Parameters<typeof getTableName>[0]);
@@ -93,9 +97,11 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
   const jwtSecret = 'dev-jwt-secret-min-32-chars-long';
   const ownerId = '01950000-0000-7000-8000-000000000001';
   const editorId = '01950000-0000-7000-8000-000000000002';
+  const viewerId = '01950000-0000-7000-8000-000000000003';
   let store: CrudStore;
   let ownerCookie: string;
   let editorCookie: string;
+  let viewerCookie: string;
 
   beforeEach(async () => {
     store = {
@@ -114,6 +120,14 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
           email: 'editor@example.com',
           name: 'Editor',
           role: 'editor',
+          tokenVersion: 0,
+          totpEnabled: false,
+          isActive: true,
+        },        {
+          id: viewerId,
+          email: 'viewer@example.com',
+          name: 'Viewer',
+          role: 'viewer',
           tokenVersion: 0,
           totpEnabled: false,
           isActive: true,
@@ -138,6 +152,7 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
     );
     ownerCookie = `pf_session=${ownerToken}`;
     editorCookie = `pf_session=${editorToken}`;
+    viewerCookie = `pf_session=${await signSession({ sub: viewerId, role: 'viewer', tv: 0 }, jwtSecret)}`;
   });
 
   afterEach(() => {
@@ -323,6 +338,83 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
       env
     );
     expect(permFail.status).toBe(400);
+  });
+  it('lets viewer read but not write, per contract role table', async () => {
+    const list = await app.request('/v1/admin/projects', { headers: { Cookie: viewerCookie } }, env);
+    expect(list.status).toBe(200);
+    const profileRes = await app.request('/v1/admin/profile', { headers: { Cookie: viewerCookie } }, env);
+    expect(profileRes.status).toBe(200);
+
+    const create = await app.request(
+      '/v1/admin/projects',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', Cookie: viewerCookie },
+        body: JSON.stringify({ slug: 'x', titleId: 'X', titleEn: 'X', summaryId: 'X', summaryEn: 'X' }),
+      },
+      env
+    );
+    expect(create.status).toBe(403);
+  });
+
+  it('reorders with PUT { ids } as editor in a single batch and writes audit log', async () => {
+    const ids = [
+      '01950000-0000-7000-8000-0000000000a1',
+      '01950000-0000-7000-8000-0000000000a2',
+      '01950000-0000-7000-8000-0000000000a3',
+    ];
+    const res = await app.request(
+      '/v1/admin/projects/reorder',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', Cookie: editorCookie },
+        body: JSON.stringify({ ids }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(store.__batches).toEqual([{ size: 3 }]);
+    expect(store.audit_logs.some((l) => l.action === 'reorder')).toBe(true);
+
+    const dup = await app.request(
+      '/v1/admin/projects/reorder',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', Cookie: editorCookie },
+        body: JSON.stringify({ ids: [ids[0], ids[0]] }),
+      },
+      env
+    );
+    expect(dup.status).toBe(400);
+  });
+
+  it('lets editor soft-delete drafts but not published items', async () => {
+    const draftId = '01950000-0000-7000-8000-0000000000b1';
+    store.projects.push({ id: draftId, slug: 'd', status: 'draft', deletedAt: null });
+    const ok = await app.request(
+      `/v1/admin/projects/${draftId}`,
+      { method: 'DELETE', headers: { Origin: 'http://localhost:3000', Cookie: editorCookie } },
+      env
+    );
+    expect(ok.status).toBe(204);
+
+    const pubId = '01950000-0000-7000-8000-0000000000b2';
+    store.projects.splice(0, store.projects.length, { id: pubId, slug: 'p', status: 'published', deletedAt: null });
+    const denied = await app.request(
+      `/v1/admin/projects/${pubId}`,
+      { method: 'DELETE', headers: { Origin: 'http://localhost:3000', Cookie: editorCookie } },
+      env
+    );
+    expect(denied.status).toBe(403);
+  });
+
+  it('refuses to authenticate when JWT_SECRET is missing instead of using a default', async () => {
+    const res = await app.request(
+      '/v1/admin/projects',
+      { headers: { Cookie: ownerCookie } },
+      { ...env, JWT_SECRET: '' }
+    );
+    expect(res.status).toBe(500);
   });
 });
 

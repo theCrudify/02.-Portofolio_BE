@@ -1,3 +1,13 @@
+import { AppError } from './errors';
+
+// No fallback: a known salt would make visitor/IP hashes reversible by brute force.
+export function getHashSalt(env: { HASH_SALT?: string } | undefined): string {
+  if (!env?.HASH_SALT) {
+    throw new AppError(500, 'INTERNAL_ERROR', 'Server misconfigured');
+  }
+  return env.HASH_SALT;
+}
+
 export async function sha256Hex(input: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(input);

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { getDb } from '../db/client';
 import { events, messages } from '../db/schema';
 import { AppError } from '../lib/errors';
-import { ipHash, visitorHash } from '../lib/hash';
+import { getHashSalt, ipHash, visitorHash } from '../lib/hash';
 import { ok } from '../lib/response';
 import { deviceOf, isBot } from '../lib/ua';
 import { SESSION_COOKIE_NAME } from '../middleware/auth';
@@ -55,7 +55,7 @@ eventsAndContactRoute.post('/v1/events', async (c) => {
 
   const rawIp =
     c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? '127.0.0.1';
-  const hashedIp = await ipHash(rawIp, c.env?.HASH_SALT || 'dev-hash-salt');
+  const hashedIp = await ipHash(rawIp, getHashSalt(c.env));
 
   if (!memoryRateLimit(`events:${hashedIp}`, 60, 60_000).allowed) {
     throw new AppError(429, 'RATE_LIMITED', 'Too many analytics events.');
@@ -68,7 +68,7 @@ eventsAndContactRoute.post('/v1/events', async (c) => {
   }
 
   const utcDate = new Date().toISOString().slice(0, 10);
-  const vHash = await visitorHash(rawIp, ua, utcDate, c.env?.HASH_SALT || 'dev-hash-salt');
+  const vHash = await visitorHash(rawIp, ua, utcDate, getHashSalt(c.env));
 
   const country = c.req.header('cf-ipcountry')?.slice(0, 2) ?? null;
   const device = deviceOf(ua);
@@ -116,7 +116,7 @@ eventsAndContactRoute.post('/v1/contact', async (c) => {
 
   const rawIp =
     c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? '127.0.0.1';
-  const hashedIp = await ipHash(rawIp, c.env?.HASH_SALT || 'dev-hash-salt');
+  const hashedIp = await ipHash(rawIp, getHashSalt(c.env));
 
   if (!memoryRateLimit(`contact:${hashedIp}`, 3, 60 * 60 * 1000).allowed) {
     throw new AppError(429, 'RATE_LIMITED', 'Too many contact submissions. Please try again later.');
@@ -130,28 +130,27 @@ eventsAndContactRoute.post('/v1/contact', async (c) => {
     throw new AppError(403, 'TURNSTILE_FAILED', 'Turnstile bot verification failed.');
   }
 
-  if (turnstileSecret && turnstileSecret !== 'ts' && !turnstileSecret.startsWith('1x0000')) {
-    try {
-      const verifyRes = await fetch(
-        'https://challenges.cloudflare.com/turnstile/v0/siteverify',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            secret: turnstileSecret,
-            response: token,
-          }),
-        }
-      );
-      if (verifyRes.ok) {
-        const outcome = (await verifyRes.json()) as { success?: boolean };
-        if (!outcome.success) {
-          throw new AppError(403, 'TURNSTILE_FAILED', 'Turnstile bot verification failed.');
-        }
-      }
-    } catch (err) {
-      if (err instanceof AppError) throw err;
+  if (!turnstileSecret) {
+    throw new AppError(500, 'INTERNAL_ERROR', 'Server misconfigured');
+  }
+  // Fail closed: any siteverify error counts as a failed check. Cloudflare's test secret
+  // (1x0000000000000000000000000000000AA) passes through siteverify, so no local bypass is needed.
+  let verified = false;
+  try {
+    const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret: turnstileSecret, response: token }),
+    });
+    if (verifyRes.ok) {
+      const outcome = (await verifyRes.json()) as { success?: boolean };
+      verified = outcome.success === true;
     }
+  } catch {
+    verified = false;
+  }
+  if (!verified) {
+    throw new AppError(403, 'TURNSTILE_FAILED', 'Turnstile bot verification failed.');
   }
 
   const db = getDb(c.env);
