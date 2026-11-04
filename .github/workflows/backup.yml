@@ -1,0 +1,29 @@
+name: Weekly Encrypted Database Backup
+
+on:
+  schedule:
+    - cron: '0 2 * * 0' # Every Sunday at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client openssl
+
+      - name: Dump and Encrypt Neon PostgreSQL Database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+          pg_dump "$DATABASE_URL" --no-owner --no-acl | gzip | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_PASSPHRASE -out "portfolio-db-${TIMESTAMP}.sql.gz.enc"
+          ls -lh "portfolio-db-${TIMESTAMP}.sql.gz.enc"
+
+      - name: Upload Encrypted Backup Artifact (90 days retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-db-backup-${{ github.run_id }}
+          path: portfolio-db-*.sql.gz.enc
+          retention-days: 90
