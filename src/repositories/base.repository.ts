@@ -7,3 +7,4 @@ export interface IBaseRepository {
 export abstract class BaseRepository implements IBaseRepository {
   constructor(public readonly db: DbClient) {}
 }
+

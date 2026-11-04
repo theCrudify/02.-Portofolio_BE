@@ -26,3 +26,4 @@ export interface LoginResponseDto {
   tempToken?: string;
   user?: AuthUserDto;
 }
+

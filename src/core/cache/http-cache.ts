@@ -30,3 +30,4 @@ export function isNotModified(c: Context, etag: string): boolean {
 
   return cleanEtag === cleanHeader || ifNoneMatch === '*' || ifNoneMatch === etag;
 }
+

@@ -26,3 +26,4 @@ export interface ApiErrorDto {
     details?: unknown;
   };
 }
+

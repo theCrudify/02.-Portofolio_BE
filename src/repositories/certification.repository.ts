@@ -29,3 +29,4 @@ export class DrizzleCertificationRepository
     return this.db.select().from(schema.media).where(isNull(schema.media.deletedAt));
   }
 }
+
