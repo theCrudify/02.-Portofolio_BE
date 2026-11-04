@@ -35,3 +35,7 @@ export interface AppEnv {
   Bindings: Bindings;
   Variables: Variables;
 }
+
+export type Env = Bindings;
+export type AppBindings = AppEnv;
+

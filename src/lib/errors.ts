@@ -20,6 +20,9 @@ export class AppError extends Error {
   }
 }
 
+export const ApiError = AppError;
+
+
 export function badRequest(
   message: string,
   code: ErrorCode = 'VALIDATION_ERROR',

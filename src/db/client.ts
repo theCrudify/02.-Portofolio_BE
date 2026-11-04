@@ -4,6 +4,8 @@ import * as schema from '@/db/schema';
 import type { Bindings } from '@/types/env';
 
 export type DbClient = NeonHttpDatabase<typeof schema>;
+export type Database = DbClient;
+
 
 let customDbForTest: DbClient | null = null;
 

@@ -57,3 +57,6 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   c.set('user', user);
   await next();
 });
+
+export const authMiddleware = requireAuth;
+
