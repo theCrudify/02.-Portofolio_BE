@@ -28,25 +28,25 @@ export interface ErrorDetail {
   message: string;
 }
 
-export function ok<T>(
+export function ok<T, S extends ContentfulStatusCode = 200>(
   c: Context,
   data: T,
   meta?: PaginationMeta,
-  status: ContentfulStatusCode = 200,
-): Response {
+  status: S = 200 as S,
+) {
   if (meta) {
     return c.json({ data, meta }, status);
   }
   return c.json({ data }, status);
 }
 
-export function fail(
+export function fail<S extends ContentfulStatusCode = ContentfulStatusCode>(
   c: Context,
-  status: ContentfulStatusCode,
+  status: S,
   code: ErrorCode,
   message: string,
   details?: ErrorDetail[],
-): Response {
+) {
   const errorObj: {
     code: ErrorCode;
     message: string;
