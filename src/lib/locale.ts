@@ -1,4 +1,5 @@
 export type SupportedLocale = 'en' | 'id';
+export type Locale = SupportedLocale;
 
 export function parseLocale(input?: string | null): SupportedLocale {
   if (input === 'id') {

@@ -1,55 +1,19 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { z } from 'zod';
-import { getDb } from '../../db/client';
-import { AppError } from '../../lib/errors';
-import { ok } from '../../lib/response';
-import { requireRole } from '../../middleware/require-role';
 import {
-  getAdminAnalytics,
-  listAdminMessages,
-  updateAdminMessage,
-} from '../../services/analytics.service';
-import type { AppBindings } from '../../types/env';
+  analyticsSummaryRoutes,
+  listMessagesRoutes,
+  updateMessageRoutes,
+} from '@/modules/analytics';
+import type { AppBindings } from '@/types/env';
 
-const patchMessageSchema = z.object({
-  isRead: z.boolean().optional(),
-  isArchived: z.boolean().optional(),
+export const adminAnalytics = new OpenAPIHono<AppBindings>({
+  defaultHook: (result) => {
+    if (!result.success) throw result.error;
+  },
 });
 
-const adminAnalytics = new OpenAPIHono<AppBindings>();
-
-adminAnalytics.get('/v1/admin/analytics', requireRole('viewer'), async (c) => {
-  const rangeParam = c.req.query('range');
-  const range =
-    rangeParam === '7d' || rangeParam === '30d' || rangeParam === '90d' ? rangeParam : '30d';
-  const db = getDb(c.env);
-  const data = await getAdminAnalytics(db, range);
-  return ok(c, data);
-});
-
-adminAnalytics.get('/v1/admin/messages', requireRole('viewer'), async (c) => {
-  const db = getDb(c.env);
-  const { rows, meta } = await listAdminMessages(db, {
-    page: Number(c.req.query('page') ?? 1),
-    limit: Number(c.req.query('limit') ?? 50),
-  });
-  return ok(c, rows, meta);
-});
-
-adminAnalytics.patch('/v1/admin/messages/:id', requireRole('owner', 'editor'), async (c) => {
-  const id = c.req.param('id');
-  const body = await c.req.json();
-  const parsed = patchMessageSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new AppError(400, 'VALIDATION_ERROR', 'Invalid message update payload');
-  }
-  const db = getDb(c.env);
-  const updated = await updateAdminMessage(db, id, parsed.data);
-  if (!updated) {
-    throw new AppError(404, 'NOT_FOUND', 'Message not found');
-  }
-  return ok(c, updated);
-});
+adminAnalytics.route('/', analyticsSummaryRoutes);
+adminAnalytics.route('/', listMessagesRoutes);
+adminAnalytics.route('/', updateMessageRoutes);
 
 export default adminAnalytics;
-
