@@ -1,4 +1,4 @@
-import type { Context } from 'hono';
+import type { Context, TypedResponse } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 
 export type ErrorCode =
@@ -33,11 +33,12 @@ export function ok<T, S extends ContentfulStatusCode = 200>(
   data: T,
   meta?: PaginationMeta,
   status: S = 200 as S,
-) {
+): Response & TypedResponse<never, S, 'json'> {
   if (meta) {
-    return c.json({ data, meta }, status);
+    return c.json({ data, meta }, status) as unknown as Response &
+      TypedResponse<never, S, 'json'>;
   }
-  return c.json({ data }, status);
+  return c.json({ data }, status) as unknown as Response & TypedResponse<never, S, 'json'>;
 }
 
 export function fail<S extends ContentfulStatusCode = ContentfulStatusCode>(
@@ -46,7 +47,7 @@ export function fail<S extends ContentfulStatusCode = ContentfulStatusCode>(
   code: ErrorCode,
   message: string,
   details?: ErrorDetail[],
-) {
+): Response & TypedResponse<never, S, 'json'> {
   const errorObj: {
     code: ErrorCode;
     message: string;
@@ -58,5 +59,6 @@ export function fail<S extends ContentfulStatusCode = ContentfulStatusCode>(
   if (details && details.length > 0) {
     errorObj.details = details;
   }
-  return c.json({ error: errorObj }, status);
+  return c.json({ error: errorObj }, status) as unknown as Response &
+    TypedResponse<never, S, 'json'>;
 }

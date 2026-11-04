@@ -7,6 +7,7 @@ import { errorHandler, notFoundHandler } from '@/middleware/error';
 import { requestIdMiddleware } from '@/middleware/request-id';
 import { registerDocsRoutes } from '@/routes/docs';
 import { healthRoute } from '@/routes/health';
+import { publicRoute } from '@/routes/public';
 import type { AppEnv, Bindings } from '@/types/env';
 
 export function createApp(): OpenAPIHono<AppEnv> {
@@ -60,6 +61,7 @@ export function createApp(): OpenAPIHono<AppEnv> {
 
   // Routes
   app.route('/', healthRoute);
+  app.route('/v1', publicRoute);
   registerDocsRoutes(app);
 
   return app;
