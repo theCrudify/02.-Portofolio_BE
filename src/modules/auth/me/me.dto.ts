@@ -4,7 +4,7 @@ export const meResponseDto = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   name: z.string(),
-  role: z.enum(['owner', 'editor', 'viewer']),
+  role: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/),
   totpEnabled: z.boolean(),
   mustEnable2fa: z.boolean(),
 });

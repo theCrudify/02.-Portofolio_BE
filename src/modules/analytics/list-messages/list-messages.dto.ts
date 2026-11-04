@@ -4,7 +4,7 @@ import { booleanQueryParam, createModuleQuerySchema } from '@/core/query';
 export const listMessagesQuerySchema = createModuleQuerySchema({
   isRead: booleanQueryParam,
   isArchived: booleanQueryParam,
-  locale: z.enum(['en', 'id']).optional(),
+  locale: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).optional(),
 });
 
 export type ListMessagesQueryDto = z.infer<typeof listMessagesQuerySchema>;

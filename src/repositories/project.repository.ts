@@ -1,24 +1,34 @@
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { DbClient } from '@/db/client';
 import { publishedOnly } from '@/db/queries/common';
+import { lk } from '@/db/queries/lookups';
 import * as schema from '@/db/schema';
+import { fetchContext, type RawContext } from './context.repository';
 import { BaseRepository } from './base.repository';
 
+type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'];
+
+export interface ProjectDetailRelations {
+  projTechRows: Row<typeof schema.projectTechnologies>[];
+  projLinkRows: Row<typeof schema.projectLinks>[];
+  projMediaRows: Row<typeof schema.projectMedia>[];
+  metricRows: Row<typeof schema.projectMetrics>[];
+  highlightRows: Row<typeof schema.projectHighlights>[];
+  responsibilityRows: Row<typeof schema.projectResponsibilities>[];
+  positionRows: Row<typeof schema.experiences>[];
+  techRows: Row<typeof schema.technologies>[];
+}
+
 export interface IProjectRepository {
-  findPublishedProjects(): Promise<(typeof schema.projects.$inferSelect)[]>;
-  findPublishedTechnologies(): Promise<(typeof schema.technologies.$inferSelect)[]>;
+  fetchContext(): Promise<RawContext>;
+  findPublishedProjects(): Promise<Row<typeof schema.projects>[]>;
+  findPublishedTechnologies(): Promise<Row<typeof schema.technologies>[]>;
   findProjectRelations(projectIds: string[]): Promise<{
-    projTechRows: (typeof schema.projectTechnologies.$inferSelect)[];
-    projLinkRows: (typeof schema.projectLinks.$inferSelect)[];
-    projMediaRows: (typeof schema.projectMedia.$inferSelect)[];
+    projTechRows: Row<typeof schema.projectTechnologies>[];
+    projLinkRows: Row<typeof schema.projectLinks>[];
+    projClipRows: Row<typeof schema.projectMedia>[];
   }>;
-  findProjectDetailRelations(projectId: string): Promise<{
-    projTechRows: (typeof schema.projectTechnologies.$inferSelect)[];
-    projLinkRows: (typeof schema.projectLinks.$inferSelect)[];
-    projMediaRows: (typeof schema.projectMedia.$inferSelect)[];
-    techRows: (typeof schema.technologies.$inferSelect)[];
-  }>;
-  loadMedia(ids: (string | null | undefined)[]): Promise<(typeof schema.media.$inferSelect)[]>;
+  findProjectDetailRelations(projectId: string): Promise<ProjectDetailRelations>;
 }
 
 export class DrizzleProjectRepository extends BaseRepository implements IProjectRepository {
@@ -26,7 +36,11 @@ export class DrizzleProjectRepository extends BaseRepository implements IProject
     super(db);
   }
 
-  async findPublishedProjects(): Promise<(typeof schema.projects.$inferSelect)[]> {
+  fetchContext(): Promise<RawContext> {
+    return fetchContext(this.db);
+  }
+
+  async findPublishedProjects() {
     return this.db
       .select()
       .from(schema.projects)
@@ -34,71 +48,69 @@ export class DrizzleProjectRepository extends BaseRepository implements IProject
       .orderBy(asc(schema.projects.sortOrder));
   }
 
-  async findPublishedTechnologies(): Promise<(typeof schema.technologies.$inferSelect)[]> {
-    return this.db
-      .select()
-      .from(schema.technologies)
-      .where(publishedOnly(schema.technologies));
+  async findPublishedTechnologies() {
+    return this.db.select().from(schema.technologies).where(publishedOnly(schema.technologies));
   }
 
   async findProjectRelations(projectIds: string[]) {
     if (projectIds.length === 0) {
-      return { projTechRows: [], projLinkRows: [], projMediaRows: [] };
+      return { projTechRows: [], projLinkRows: [], projClipRows: [] };
     }
-
-    const [projTechRows, projLinkRows, projMediaRows] = await Promise.all([
+    const [projTechRows, projLinkRows, projClipRows] = await Promise.all([
       this.db
         .select()
         .from(schema.projectTechnologies)
         .where(inArray(schema.projectTechnologies.projectId, projectIds)),
-      this.db
-        .select()
-        .from(schema.projectLinks)
-        .where(inArray(schema.projectLinks.projectId, projectIds)),
+      this.db.select().from(schema.projectLinks).where(inArray(schema.projectLinks.projectId, projectIds)),
       this.db
         .select()
         .from(schema.projectMedia)
         .where(
           and(
             inArray(schema.projectMedia.projectId, projectIds),
-            eq(schema.projectMedia.role, 'clip'),
+            eq(schema.projectMedia.roleId, lk('project_media_role', 'clip')),
           ),
         ),
     ]);
-
-    return { projTechRows, projLinkRows, projMediaRows };
+    return { projTechRows, projLinkRows, projClipRows };
   }
 
-  async findProjectDetailRelations(projectId: string) {
-    const [projTechRows, projLinkRows, projMediaRows, techRows] = await Promise.all([
+  async findProjectDetailRelations(projectId: string): Promise<ProjectDetailRelations> {
+    const byProject = <T extends { projectId: unknown }>(t: T) => eq(t.projectId as never, projectId);
+    const [
+      projTechRows,
+      projLinkRows,
+      projMediaRows,
+      metricRows,
+      highlightRows,
+      responsibilityRows,
+      positionRows,
+      techRows,
+    ] = await Promise.all([
+      this.db.select().from(schema.projectTechnologies).where(byProject(schema.projectTechnologies)),
+      this.db.select().from(schema.projectLinks).where(byProject(schema.projectLinks)),
+      this.db.select().from(schema.projectMedia).where(byProject(schema.projectMedia)),
+      this.db.select().from(schema.projectMetrics).where(byProject(schema.projectMetrics)),
+      this.db.select().from(schema.projectHighlights).where(byProject(schema.projectHighlights)),
+      this.db.select().from(schema.projectResponsibilities).where(byProject(schema.projectResponsibilities)),
+      // Published positions this project belongs to.
       this.db
-        .select()
-        .from(schema.projectTechnologies)
-        .where(eq(schema.projectTechnologies.projectId, projectId)),
-      this.db
-        .select()
-        .from(schema.projectLinks)
-        .where(eq(schema.projectLinks.projectId, projectId)),
-      this.db
-        .select()
-        .from(schema.projectMedia)
-        .where(eq(schema.projectMedia.projectId, projectId)),
-      this.db
-        .select()
-        .from(schema.technologies)
-        .where(publishedOnly(schema.technologies)),
+        .select({ experience: schema.experiences })
+        .from(schema.experienceProjects)
+        .innerJoin(schema.experiences, eq(schema.experiences.id, schema.experienceProjects.experienceId))
+        .where(and(eq(schema.experienceProjects.projectId, projectId), publishedOnly(schema.experiences)))
+        .then((rows) => rows.map((r) => r.experience)),
+      this.db.select().from(schema.technologies).where(publishedOnly(schema.technologies)),
     ]);
-
-    return { projTechRows, projLinkRows, projMediaRows, techRows };
-  }
-
-  async loadMedia(ids: (string | null | undefined)[]) {
-    const unique = [...new Set(ids.filter((id): id is string => Boolean(id)))];
-    if (unique.length === 0) return [];
-    return this.db
-      .select()
-      .from(schema.media)
-      .where(and(inArray(schema.media.id, unique), isNull(schema.media.deletedAt)));
+    return {
+      projTechRows,
+      projLinkRows,
+      projMediaRows,
+      metricRows,
+      highlightRows,
+      responsibilityRows,
+      positionRows,
+      techRows,
+    };
   }
 }
-

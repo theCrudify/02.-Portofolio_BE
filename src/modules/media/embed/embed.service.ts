@@ -1,3 +1,4 @@
+import { lk } from '@/db/queries/lookups';
 import type { DbClient } from '@/db/client';
 import { BaseService } from '@/core/base';
 import { resolveVideoEmbed } from '@/lib/oembed';
@@ -15,8 +16,8 @@ export class EmbedMediaService extends BaseService {
   async execute(dto: EmbedMediaBodyDto, userId: string) {
     const resolved = await resolveVideoEmbed(dto.url);
     const created = await this.repo.insertMedia({
-      provider: resolved.provider,
-      kind: 'video',
+      providerId: lk('media_provider', resolved.provider),
+      kindId: lk('media_kind', 'video'),
       embedId: resolved.embedId,
       url: resolved.url,
       thumbnailUrl: resolved.thumbnailUrl,
@@ -36,6 +37,6 @@ export class EmbedMediaService extends BaseService {
       summary: `Embedded ${resolved.provider} video (${resolved.embedId})`,
     });
 
-    return created;
+    return { ...created, kind: 'video', provider: resolved.provider };
   }
 }

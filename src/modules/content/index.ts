@@ -1,7 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import type { AppEnv } from '@/types/env';
 import { singletonContentRoutes } from './singleton';
-import { relationsContentRoutes } from './relations';
 import { reorderContentRoutes } from './reorder';
 import { listContentRoutes } from './list';
 import { createContentRoutes } from './create';
@@ -13,7 +12,6 @@ import { transitionContentRoutes } from './transition';
 export const contentModuleRoutes = new OpenAPIHono<AppEnv>();
 
 contentModuleRoutes.route('/', singletonContentRoutes);
-contentModuleRoutes.route('/', relationsContentRoutes);
 contentModuleRoutes.route('/', reorderContentRoutes);
 contentModuleRoutes.route('/', listContentRoutes);
 contentModuleRoutes.route('/', createContentRoutes);
@@ -23,7 +21,6 @@ contentModuleRoutes.route('/', deleteContentRoutes);
 contentModuleRoutes.route('/', transitionContentRoutes);
 
 export * from './singleton';
-export * from './relations';
 export * from './reorder';
 export * from './list';
 export * from './create';

@@ -1,21 +1,23 @@
-import { eq, isNull } from 'drizzle-orm';
+import { eq, inArray, isNull } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import { SqlQueryBuilder } from '@/core/query';
+import { loadLookups } from '@/db/queries/lookups';
 import { media } from '@/db/schema';
 import type { ListMediaQueryDto } from './list.dto';
 
 export class ListMediaRepository extends BaseRepository {
   async list(query: ListMediaQueryDto) {
-    const dbKind: 'image' | 'video' | 'pdf' | undefined =
-      query.kind === 'document' || query.kind === 'pdf'
-        ? 'pdf'
-        : query.kind === 'image' || query.kind === 'video'
-          ? query.kind
-          : undefined;
+    const lookups = await loadLookups(this.db);
+    // `kind` accepts several codes, e.g. "pdf,document" for every document-like file.
+    const kindIds = (query.kind ?? '')
+      .split(',')
+      .filter(Boolean)
+      .map((code) => lookups.idOf('media_kind', code.trim()) ?? '');
+    const providerId = lookups.idOf('media_provider', query.provider);
 
     const baseWhere = query.includeDeleted ? undefined : isNull(media.deletedAt);
 
-    return SqlQueryBuilder.execute(this.db, {
+    const result = await SqlQueryBuilder.execute(this.db, {
       table: media,
       query: {
         ...query,
@@ -27,7 +29,7 @@ export class ListMediaRepository extends BaseRepository {
         createdAt: media.createdAt,
         updatedAt: media.updatedAt,
         bytes: media.bytes,
-        kind: media.kind,
+        kind: media.kindId,
         titleEn: media.titleEn,
       },
       defaultSortColumn: media.createdAt,
@@ -36,15 +38,22 @@ export class ListMediaRepository extends BaseRepository {
       baseWhere,
       filterFn: () => {
         const conds = [];
-        if (dbKind) conds.push(eq(media.kind, dbKind));
-        if (query.provider) conds.push(eq(media.provider, query.provider as never));
+        if (kindIds.length) conds.push(inArray(media.kindId, kindIds));
+        if (query.provider) conds.push(eq(media.providerId, providerId ?? ''));
         return conds;
       },
       memoryPredicates: [
         (item) => (query.includeDeleted ? true : !item.deletedAt),
-        (item) => (dbKind ? item.kind === dbKind : true),
-        (item) => (query.provider ? item.provider === query.provider : true),
+        (item) => (kindIds.length ? kindIds.includes(String(item.kindId)) : true),
+        (item) => (query.provider ? item.providerId === providerId : true),
       ],
     });
+    // Admin clients work with codes; ids stay on the row for references.
+    const items = result.data.map((m) => ({
+      ...m,
+      kind: lookups.code(m.kindId as string) ?? '',
+      provider: lookups.code(m.providerId as string) ?? '',
+    }));
+    return { ...result, data: items, rows: items };
   }
 }

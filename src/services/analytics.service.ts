@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import type { Database } from '../db/client';
 import { paginate, type PaginateInput } from '../db/queries/common';
+import { loadLookups, type WithSql } from '../db/queries/lookups';
 import { dailyStats, events, githubCache, loginAttempts, messages, shareLinks } from '../db/schema';
 import { revalidate } from '../lib/revalidate';
 import type { Env } from '../types/env';
@@ -22,7 +23,7 @@ export async function aggregateEventsForDate(db: Database, dateStr: string) {
     string,
     {
       date: string;
-      type: (typeof dayEvents)[number]['type'];
+      typeId: string;
       path: string;
       target: string;
       count: number;
@@ -33,12 +34,12 @@ export async function aggregateEventsForDate(db: Database, dateStr: string) {
   for (const ev of dayEvents) {
     const path = ev.path ?? '';
     const target = ev.target ?? '';
-    const key = `${dateStr}|${ev.type}|${path}|${target}`;
+    const key = `${dateStr}|${ev.typeId}|${path}|${target}`;
     let g = groups.get(key);
     if (!g) {
       g = {
         date: dateStr,
-        type: ev.type,
+        typeId: ev.typeId,
         path,
         target,
         count: 0,
@@ -56,7 +57,7 @@ export async function aggregateEventsForDate(db: Database, dateStr: string) {
   await db.delete(dailyStats).where(eq(dailyStats.date, dateStr));
   const toInsert = Array.from(groups.values()).map((g) => ({
     date: g.date,
-    type: g.type,
+    typeId: g.typeId,
     path: g.path,
     target: g.target,
     count: g.count,
@@ -157,10 +158,10 @@ export async function getAdminAnalytics(db: Database, range: '7d' | '30d' | '90d
   const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
   const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const stats = await db
-    .select()
-    .from(dailyStats)
-    .where(gte(dailyStats.date, sinceDate));
+  const [stats, lookups] = await Promise.all([
+    db.select().from(dailyStats).where(gte(dailyStats.date, sinceDate)),
+    loadLookups(db),
+  ]);
 
   let totalViews = 0;
   let uniqueVisitors = 0;
@@ -170,7 +171,8 @@ export async function getAdminAnalytics(db: Database, range: '7d' | '30d' | '90d
   const byPath = new Map<string, number>();
 
   for (const row of stats) {
-    if (row.type === 'page_view') {
+    const type = lookups.code(row.typeId);
+    if (type === 'page_view') {
       totalViews += row.count;
       uniqueVisitors += row.uniqueVisitors;
       const entry = byDate.get(row.date) ?? { date: row.date, views: 0, visitors: 0 };
@@ -179,7 +181,7 @@ export async function getAdminAnalytics(db: Database, range: '7d' | '30d' | '90d
       byDate.set(row.date, entry);
       byPath.set(row.path, (byPath.get(row.path) ?? 0) + row.count);
     }
-    if (row.type === 'cv_download' || row.type === 'export_download') {
+    if (type === 'cv_download' || type === 'export_download') {
       cvDownloads += row.count;
     }
   }
@@ -203,11 +205,14 @@ export async function getAdminAnalytics(db: Database, range: '7d' | '30d' | '90d
   };
 }
 
-export async function recordEvent(db: Database, values: typeof events.$inferInsert) {
+export async function recordEvent(db: Database, values: WithSql<typeof events.$inferInsert>) {
   await db.insert(events).values(values);
 }
 
-export async function saveContactMessage(db: Database, values: typeof messages.$inferInsert) {
+export async function saveContactMessage(
+  db: Database,
+  values: WithSql<typeof messages.$inferInsert>,
+) {
   const [saved] = await db.insert(messages).values(values).returning();
   return saved;
 }

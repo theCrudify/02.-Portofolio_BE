@@ -1,28 +1,20 @@
+import { lk } from '@/db/queries/lookups';
+import { selectWithStatus } from '@/services/content-store';
 import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import { SqlQueryBuilder } from '@/core/query';
 import type { ResourceConfig } from '@/services/resource-registry';
 import type { ListContentQueryDto } from './list.dto';
 
-const SEARCHABLE_KEYS = [
-  'name',
-  'slug',
-  'titleEn',
-  'titleId',
-  'summaryEn',
-  'summaryId',
-  'company',
-  'roleEn',
-  'roleId',
-  'institution',
-  'degree',
-  'issuer',
-  'organization',
-  'eventName',
-  'title',
-  'venue',
-  'quoteEn',
-];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `?type=` / `?category=` accept a lookup id or a code of the column's lookup group. */
+function lookupFilter(config: ResourceConfig, column: string, value: string | undefined) {
+  if (!value) return null;
+  const group = config.lookupFields?.[column];
+  if (!group || !(column in config.table)) return null;
+  return eq(config.table[column], UUID.test(value) ? value : lk(group, value));
+}
 
 export class ListContentRepository extends BaseRepository {
   async list(config: ResourceConfig, query: Partial<ListContentQueryDto>) {
@@ -33,17 +25,15 @@ export class ListContentRepository extends BaseRepository {
       conditions.push(isNull(config.table.deletedAt));
     }
     if (query.status) {
-      conditions.push(eq(config.table.status, query.status));
+      conditions.push(eq(config.table.statusId, lk('content_status', query.status)));
     }
     if (query.featured !== undefined && 'featured' in config.table) {
       conditions.push(eq(config.table.featured, query.featured));
     }
-    if (query.category && 'category' in config.table) {
-      conditions.push(eq(config.table.category, query.category));
-    }
-    if (query.type && 'type' in config.table) {
-      conditions.push(eq(config.table.type, query.type));
-    }
+    const categoryCond = lookupFilter(config, 'categoryId', query.category);
+    if (categoryCond) conditions.push(categoryCond);
+    const typeCond = lookupFilter(config, 'typeId', query.type);
+    if (typeCond) conditions.push(typeCond);
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     const hasCustomQuery = Boolean(
@@ -58,9 +48,7 @@ export class ListContentRepository extends BaseRepository {
     );
 
     if (hasCustomQuery) {
-      const allRows = (await this.db
-        .select()
-        .from(config.table)
+      const allRows = (await selectWithStatus(this.db, config.table)
         .where(whereClause)
         .orderBy(asc(config.table.sortOrder), desc(config.table.createdAt))) as Record<
         string,
@@ -78,14 +66,10 @@ export class ListContentRepository extends BaseRepository {
           sort: query.sort,
           all: query.all,
           includeDeleted: query.includeDeleted,
-          filters: {
-            status: query.status,
-            featured: query.featured,
-            category: query.category,
-            type: query.type,
-          },
+          // status/featured/category/type are already applied in SQL above.
+          filters: {},
         },
-        SEARCHABLE_KEYS,
+        config.searchKeys,
       );
 
       const total = refined.length;
@@ -103,9 +87,7 @@ export class ListContentRepository extends BaseRepository {
     }
 
     const [rows, total] = await Promise.all([
-      this.db
-        .select()
-        .from(config.table)
+      selectWithStatus(this.db, config.table)
         .where(whereClause)
         .orderBy(asc(config.table.sortOrder), desc(config.table.createdAt))
         .limit(limit)

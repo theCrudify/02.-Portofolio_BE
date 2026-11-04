@@ -7,7 +7,11 @@ import {
   type ISiteRepository,
   type RawSiteData,
 } from '@/repositories/site.repository';
+import type { LookupGroupCode } from '@/db/queries/lookups';
+import { pickLocale } from '@/lib/locale';
+import { toContext } from '@/repositories/context.repository';
 import {
+  groupTechnologies,
   toAchievement,
   toActivity,
   toCertification,
@@ -17,9 +21,11 @@ import {
   toPublication,
   toPublicProfile,
   toPublicSettings,
-  toTechChip,
   toTestimonial,
-  type MediaRow,
+  lookupOf,
+  toBullets,
+  toMetrics,
+  type SerializeContext,
   type TechnologyRow,
 } from '@/services/serializers';
 
@@ -56,7 +62,7 @@ export class SiteService {
    * Retrieve aggregated site data with caching (tag: 'site', TTL: 300s).
    */
   async getSite(locale: SupportedLocale) {
-    const cacheKey = `site:v1:${locale}`;
+    const cacheKey = `site:v2:${locale}`;
     return this.cache.remember(
       cacheKey,
       300,
@@ -76,142 +82,112 @@ export class SiteService {
   }
 
   private serializeSiteData(raw: RawSiteData, locale: SupportedLocale) {
-    const {
-      profileRows,
-      settingsRows,
-      techRows,
-      projectRows,
-      experienceRows,
-      educationRows,
-      certRows,
-      activityRows,
-      achievementRows,
-      publicationRows,
-      testimonialRows,
-      githubRows,
-      projTechRows,
-      projLinkRows,
-      projMediaRows,
-      expTechRows,
-      allMediaRows,
-    } = raw;
-
-    const featuredProjectRows = projectRows.filter((p) => p.featured).slice(0, 6);
-    const featuredCertRows = certRows.filter((c) => c.featured);
-
-    const mediaMap = new Map<string, MediaRow>();
-    for (const m of allMediaRows) {
-      mediaMap.set(m.id, m);
-    }
-
-    const techMap = new Map<string, TechnologyRow>();
-    for (const t of techRows) {
-      techMap.set(t.id, t);
-    }
-
-    const groupedTechnologies: Record<
-      'frontend' | 'backend' | 'database' | 'devops' | 'tools' | 'soft_skill',
-      ReturnType<typeof toTechChip>[]
-    > = {
-      frontend: [],
-      backend: [],
-      database: [],
-      devops: [],
-      tools: [],
-      soft_skill: [],
-    };
-
-    for (const t of techRows) {
-      if (t.showOnSkills) {
-        groupedTechnologies[t.category].push(toTechChip(t));
-      }
-    }
-
-    const featuredProjects = featuredProjectRows.map((p) => {
-      const pTechs = projTechRows
-        .filter((pt) => pt.projectId === p.id)
-        .sort((a, b) => a.sortOrder - b.sortOrder)
-        .map((pt) => techMap.get(pt.technologyId))
-        .filter((t): t is TechnologyRow => Boolean(t));
-
-      const pLinks = projLinkRows.filter((pl) => pl.projectId === p.id);
-      const clipRelation = projMediaRows
-        .filter((pm) => pm.projectId === p.id && pm.role === 'clip')
-        .sort((a, b) => a.sortOrder - b.sortOrder)[0];
-      const clipMedia = clipRelation ? mediaMap.get(clipRelation.mediaId) : null;
-      const coverMedia = p.coverMediaId ? mediaMap.get(p.coverMediaId) : null;
-
-      return toProjectCard(p, coverMedia, pTechs, pLinks, clipMedia, locale);
-    });
-
-    const experiences = experienceRows.map((exp) => {
-      const eTechs = expTechRows
-        .filter((et) => et.experienceId === exp.id)
-        .map((et) => techMap.get(et.technologyId))
-        .filter((t): t is TechnologyRow => Boolean(t));
-      const logo = exp.companyMediaId ? mediaMap.get(exp.companyMediaId) : null;
-      return toExperience(exp, eTechs, logo, locale);
-    });
-
-    const education = educationRows.map((edu) => {
-      const logo = edu.logoMediaId ? mediaMap.get(edu.logoMediaId) : null;
-      return toEducation(edu, logo, locale);
-    });
-
-    const certifications = featuredCertRows.map((cert) => {
-      const issuerLogo = cert.issuerMediaId ? mediaMap.get(cert.issuerMediaId) : null;
-      const image = cert.imageMediaId ? mediaMap.get(cert.imageMediaId) : null;
-      return toCertification(cert, issuerLogo, image, locale);
-    });
-
-    const activities = activityRows.map((act) => {
-      const mediaItem = act.mediaId ? mediaMap.get(act.mediaId) : null;
-      return toActivity(act, mediaItem, locale);
-    });
-
-    const achievements = achievementRows.map((ach) => {
-      const certMedia = ach.certificateMediaId ? mediaMap.get(ach.certificateMediaId) : null;
-      return toAchievement(ach, certMedia, locale);
-    });
-
-    const publications = publicationRows.map((pub) => {
-      const videoMedia = pub.videoMediaId ? mediaMap.get(pub.videoMediaId) : null;
-      return toPublication(pub, videoMedia, locale);
-    });
-
-    const testimonials = testimonialRows.map((testi) => {
-      const avatar = testi.avatarMediaId ? mediaMap.get(testi.avatarMediaId) : null;
-      return toTestimonial(testi, avatar, locale);
-    });
-
-    const profileRow = profileRows[0] ?? null;
-    const settingsRow = settingsRows[0] ?? null;
-
-    const avatarMedia = profileRow?.avatarMediaId
-      ? mediaMap.get(profileRow.avatarMediaId)
-      : null;
-    const ogMedia = settingsRow?.ogMediaId ? mediaMap.get(settingsRow.ogMediaId) : null;
+    const ctx = toContext(raw.context, locale);
+    const c = serializeCollections(raw, ctx);
+    const profileRow = raw.profileRows[0] ?? null;
 
     return {
-      profile: toPublicProfile(profileRow, avatarMedia, locale),
-      settings: toPublicSettings(settingsRow, ogMedia, locale),
+      profile: toPublicProfile(profileRow, ctx, {
+        socials: raw.socialRows,
+        languages: raw.languageRows,
+        interests: raw.interestRows,
+      }),
+      settings: toPublicSettings(raw.settingsRows[0] ?? null, ctx, raw.sectionRows),
       stats: {
         yearsExperience: calculateYearsExperience(profileRow?.careerStartDate),
-        projectCount: projectRows.length,
-        certificationCount: certRows.length,
+        projectCount: raw.projectRows.length,
+        certificationCount: raw.certRows.length,
       },
-      technologies: groupedTechnologies,
-      experiences,
-      education,
-      certifications,
-      activities,
-      achievements,
-      publications,
-      testimonials,
-      github: githubRows[0]?.data ?? null,
-      featuredProjects,
+      technologies: c.technologies,
+      experiences: c.experiences,
+      education: c.education,
+      certifications: c.certifications.filter((cert) => cert.featured),
+      activities: c.activities,
+      achievements: c.achievements,
+      publications: c.publications,
+      testimonials: c.testimonials,
+      github: raw.githubRows[0]?.data ?? null,
+      featuredProjects: c.projects.filter((p) => p.featured).slice(0, 6),
+      // Public CV export presets (downloadable PDFs), chosen per locale by the frontend.
+      exportPresets: raw.presetRows.map((p) => ({
+        slug: p.slug,
+        name: p.name,
+        template: ctx.lookups.code(p.templateId) ?? 'full',
+        locale: ctx.lookups.code(p.localeId) ?? 'en',
+      })),
+      // Filter options for public listings come from master data, not the frontend.
+      filters: {
+        projectTypes: lookupOptions(ctx, 'project_type'),
+        certificationTypes: lookupOptions(ctx, 'cert_type'),
+        activityTypes: lookupOptions(ctx, 'activity_type'),
+      },
     };
   }
+}
+
+function lookupOptions(ctx: SerializeContext, group: LookupGroupCode) {
+  return ctx.lookups.group(group).flatMap((row) => lookupOf(ctx, row.id) ?? []);
+}
+
+/** Every published collection, fully linked; shared by the site payload and the CV export. */
+export function serializeCollections(raw: RawSiteData, ctx: SerializeContext) {
+  const { locale } = ctx;
+  const techMap = new Map<string, TechnologyRow>(raw.techRows.map((t) => [t.id, t]));
+  const projectMap = new Map(raw.projectRows.map((p) => [p.id, p]));
+  const byParent = <T, K extends keyof T>(rows: T[], key: K, id: string) =>
+    rows.filter((r) => r[key] === id);
+
+  const projects = raw.projectRows.map((p) => {
+    const techs = byParent(raw.projTechRows, 'projectId', p.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .flatMap((pt) => techMap.get(pt.technologyId) ?? []);
+    const clip = byParent(raw.projClipRows, 'projectId', p.id).sort(
+      (a, b) => a.sortOrder - b.sortOrder,
+    )[0];
+    return {
+      ...toProjectCard(p, ctx, techs, byParent(raw.projLinkRows, 'projectId', p.id), clip?.mediaId ?? null),
+      role: pickLocale(p, 'role', locale),
+      responsibilities: toBullets(byParent(raw.projResponsibilityRows, 'projectId', p.id), locale),
+      metrics: toMetrics(byParent(raw.projMetricRows, 'projectId', p.id), locale),
+    };
+  });
+
+  return {
+    projects,
+    // Skill categories are lookups: grouped and ordered by the tech_category group.
+    technologies: groupTechnologies(
+      ctx,
+      raw.techRows
+        .filter((t) => t.showOnSkills)
+        .map((t) => ({ tech: t, groupId: t.categoryId, sortOrder: t.sortOrder })),
+    ),
+    experiences: raw.experienceRows.map((exp) =>
+      toExperience(exp, ctx, {
+        technologies: byParent(raw.expTechRows, 'experienceId', exp.id).flatMap(
+          (et) => techMap.get(et.technologyId) ?? [],
+        ),
+        responsibilities: byParent(raw.expResponsibilityRows, 'experienceId', exp.id),
+        achievements: byParent(raw.expAchievementRows, 'experienceId', exp.id),
+        // Only published projects are linked publicly.
+        projects: byParent(raw.expProjectRows, 'experienceId', exp.id)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .flatMap((ep) => {
+            const p = projectMap.get(ep.projectId);
+            return p ? [{ slug: p.slug, title: pickLocale(p, 'title', locale) ?? p.titleEn }] : [];
+          }),
+      }),
+    ),
+    education: raw.educationRows.map((edu) =>
+      toEducation(edu, ctx, byParent(raw.eduActivityRows, 'educationId', edu.id)),
+    ),
+    certifications: raw.certRows.map((cert) => toCertification(cert, ctx)),
+    activities: raw.activityRows.map((act) =>
+      toActivity(act, ctx, byParent(raw.activityAchievementRows, 'activityId', act.id)),
+    ),
+    achievements: raw.achievementRows.map((a) => toAchievement(a, ctx)),
+    publications: raw.publicationRows.map((p) => toPublication(p, ctx)),
+    testimonials: raw.testimonialRows.map((t) => toTestimonial(t, ctx)),
+  };
 }
 
 /**

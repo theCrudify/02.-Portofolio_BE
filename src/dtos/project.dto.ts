@@ -24,7 +24,7 @@ export const createProjectSchema = z.object({
   title: z.record(z.string()),
   summary: z.record(z.string()).optional(),
   description: z.record(z.string()).optional(),
-  type: z.enum(['personal', 'freelance', 'company', 'open_source', 'hackathon']),
+  type: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/),
   technologyIds: z.array(z.string()).default([]),
   featured: z.boolean().default(false),
   coverImageId: z.string().optional().nullable(),

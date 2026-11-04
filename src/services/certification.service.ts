@@ -6,11 +6,13 @@ import {
   DrizzleCertificationRepository,
   type ICertificationRepository,
 } from '@/repositories/certification.repository';
-import { toCertification, type MediaRow } from '@/services/serializers';
+import { toContext } from '@/repositories/context.repository';
+import { toCertification } from '@/services/serializers';
 
 export interface ListCertificationsOptions {
   locale: SupportedLocale;
-  type?: 'certification' | 'course' | 'bootcamp' | 'training';
+  /** cert_type lookup code */
+  type?: string;
 }
 
 /**
@@ -28,29 +30,20 @@ export class CertificationService {
    */
   async listCertifications(options: ListCertificationsOptions) {
     const { locale, type } = options;
-    const cacheKey = `certifications:list:${locale}:${type ?? 'all'}`;
+    const cacheKey = `certifications:list:v2:${locale}:${type ?? 'all'}`;
 
     return this.cache.remember(
       cacheKey,
       300,
       async () => {
-        const [certRows, mediaRows] = await Promise.all([
+        const [certRows, rawContext] = await Promise.all([
           this.certRepo.findPublishedCertifications(),
-          this.certRepo.findActiveMedia(),
+          this.certRepo.fetchContext(),
         ]);
-
-        const mediaMap = new Map<string, MediaRow>();
-        for (const m of mediaRows) {
-          mediaMap.set(m.id, m);
-        }
-
-        const filtered = type ? certRows.filter((c) => c.type === type) : certRows;
-
-        return filtered.map((cert) => {
-          const issuerMedia = cert.issuerMediaId ? mediaMap.get(cert.issuerMediaId) : null;
-          const imageMedia = cert.imageMediaId ? mediaMap.get(cert.imageMediaId) : null;
-          return toCertification(cert, issuerMedia, imageMedia, locale);
-        });
+        const ctx = toContext(rawContext, locale);
+        const typeId = type ? ctx.lookups.idOf('cert_type', type) : null;
+        const filtered = type ? certRows.filter((c) => c.typeId === typeId) : certRows;
+        return filtered.map((cert) => toCertification(cert, ctx));
       },
       ['certifications'],
     );

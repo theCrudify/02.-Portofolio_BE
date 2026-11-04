@@ -1,82 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getTableName } from 'drizzle-orm';
-import { uuidv7 } from 'uuidv7';
+import { eq } from 'drizzle-orm';
 import { app } from '@/index';
 import { setTestDb, type DbClient } from '@/db/client';
+import { lk } from '@/db/queries/lookups';
+import * as schema from '@/db/schema';
 import { clearMemoryRateLimits } from '@/middleware/rate-limit';
 import { aggregateEventsForDate } from '@/services/analytics.service';
-
-interface AnalyticsStore {
-  events: Record<string, unknown>[];
-  daily_stats: Record<string, unknown>[];
-  messages: Record<string, unknown>[];
-  users: Record<string, unknown>[];
-  [key: string]: Record<string, unknown>[];
-}
-
-function createAnalyticsMockDb(store: AnalyticsStore): DbClient {
-  const buildChain = (rows: Record<string, unknown>[]) => {
-    const chain: Record<string, unknown> = {
-      where: () => buildChain(rows),
-      orderBy: () => buildChain(rows),
-      limit: (n: number) => buildChain(rows.slice(0, n)),
-      offset: (o: number) => buildChain(rows.slice(o)),
-      then: (
-        resolve: (val: Record<string, unknown>[]) => unknown,
-        reject?: (err: unknown) => unknown
-      ) => Promise.resolve(rows).then(resolve, reject),
-    };
-    return chain;
-  };
-
-  return {
-    select: () => ({
-      from: (table: unknown) => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]);
-        return buildChain(store[name] ?? []);
-      },
-    }),
-    insert: (table: unknown) => ({
-      values: (val: Record<string, unknown> | Record<string, unknown>[]) => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]);
-        store[name] = store[name] ?? [];
-        const items = Array.isArray(val) ? val : [val];
-        const inserted = items.map((item) => {
-          const row = {
-            id: (item.id as string | undefined) ?? uuidv7(),
-            createdAt: new Date(),
-            ...item,
-          };
-          store[name]!.push(row);
-          return row;
-        });
-        return Object.assign(Promise.resolve(inserted), {
-          returning: () => Promise.resolve(inserted),
-        });
-      },
-    }),
-    delete: (table: unknown) => ({
-      where: () => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]);
-        store[name] = [];
-        return Promise.resolve();
-      },
-    }),
-  } as unknown as DbClient;
-}
+import { lookupIdOf, useTestDb } from './helpers/db';
 
 describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact Form', () => {
-  let store: AnalyticsStore;
+  let db: DbClient;
+  const allEvents = () => db.select().from(schema.events);
+  const allMessages = () => db.select().from(schema.messages);
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearMemoryRateLimits();
-    store = {
-      events: [],
-      daily_stats: [],
-      messages: [],
-      users: [],
-    };
-    setTestDb(createAnalyticsMockDb(store));
+    db = await useTestDb();
   });
 
   afterEach(() => {
@@ -112,7 +51,7 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
       env
     );
     expect(botRes.status).toBe(204);
-    expect(store.events.length).toBe(0);
+    expect(await allEvents()).toHaveLength(0);
 
     // Admin session cookie -> 204, not stored
     const adminRes = await app.request(
@@ -129,7 +68,7 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
       env
     );
     expect(adminRes.status).toBe(204);
-    expect(store.events.length).toBe(0);
+    expect(await allEvents()).toHaveLength(0);
 
     // Real visitor -> 204, stored with visitorHash and device
     const visitorRes = await app.request(
@@ -146,9 +85,12 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
       env
     );
     expect(visitorRes.status).toBe(204);
-    expect(store.events.length).toBe(1);
-    expect(store.events[0]!.device).toBe('mobile');
-    expect(typeof store.events[0]!.visitorHash).toBe('string');
+    const stored = await allEvents();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.device).toBe('mobile');
+    expect(stored[0]!.visitorHash).toHaveLength(64);
+    expect(stored[0]!.typeId).toBe(await lookupIdOf(db, 'event_type', 'page_view'));
+    expect(stored[0]!.localeId).toBeNull();
   });
 
   it('handles contact form honeypot silently, rejects invalid Turnstile token with 403, and saves valid messages', async () => {
@@ -177,7 +119,7 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
       env
     );
     expect(honeyRes.status).toBe(200);
-    expect(store.messages.length).toBe(0);
+    expect(await allMessages()).toHaveLength(0);
 
     // Missing / invalid Turnstile -> 403 TURNSTILE_FAILED
     const failTurnstile = await app.request(
@@ -215,7 +157,11 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
       env
     );
     expect(okRes.status).toBe(201);
-    expect(store.messages.length).toBe(1);
+    const saved = await allMessages();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ email: 'person@example.com', subject: 'Job Opportunity', isRead: false });
+    // No locale sent -> defaults to 'en'.
+    expect(saved[0]!.localeId).toBe(await lookupIdOf(db, 'locale', 'en'));
 
     // siteverify unreachable -> fail closed
     vi.stubGlobal('fetch', async () => {
@@ -240,26 +186,88 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
   });
 
   it('aggregates daily events idempotently with accurate count and uniqueVisitors', async () => {
-    const db = createAnalyticsMockDb(store);
     const dateStr = '2026-04-10';
     const ts = new Date('2026-04-10T12:00:00.000Z');
+    const pageView = lk('event_type', 'page_view');
 
-    store.events.push(
-      { type: 'page_view', path: '/en', target: '', visitorHash: 'v1', createdAt: ts },
-      { type: 'page_view', path: '/en', target: '', visitorHash: 'v1', createdAt: ts },
-      { type: 'page_view', path: '/en', target: '', visitorHash: 'v2', createdAt: ts }
-    );
+    await db.insert(schema.events).values([
+      { typeId: pageView, path: '/en', target: '', visitorHash: 'v1', createdAt: ts },
+      { typeId: pageView, path: '/en', target: '', visitorHash: 'v1', createdAt: ts },
+      { typeId: pageView, path: '/en', target: '', visitorHash: 'v2', createdAt: ts },
+      // Other day: must not be counted.
+      { typeId: pageView, path: '/en', target: '', visitorHash: 'v3', createdAt: new Date('2026-04-11T00:00:00.000Z') },
+    ]);
+
+    const expected = [
+      {
+        date: dateStr,
+        typeId: await lookupIdOf(db, 'event_type', 'page_view'),
+        path: '/en',
+        target: '',
+        count: 3,
+        uniqueVisitors: 2,
+      },
+    ];
+    const statsFor = () => db.select().from(schema.dailyStats).where(eq(schema.dailyStats.date, dateStr));
 
     await aggregateEventsForDate(db, dateStr);
-    expect(store.daily_stats.length).toBe(1);
-    expect(store.daily_stats[0]!.count).toBe(3);
-    expect(store.daily_stats[0]!.uniqueVisitors).toBe(2);
+    expect(await statsFor()).toEqual(expected);
 
     // Running again on the same date is idempotent (replaces instead of doubling)
     await aggregateEventsForDate(db, dateStr);
-    expect(store.daily_stats.length).toBe(1);
-    expect(store.daily_stats[0]!.count).toBe(3);
-    expect(store.daily_stats[0]!.uniqueVisitors).toBe(2);
+    expect(await statsFor()).toEqual(expected);
+  });
+
+  it('rejects unknown event type or locale codes with 400 and stores nothing', async () => {
+    const send = (body: Record<string, unknown>) =>
+      app.request(
+        '/v1/events',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+            'CF-Connecting-IP': '203.0.113.7',
+          },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+
+    const badType = await send({ type: 'not_a_type', path: '/en' });
+    expect(badType.status).toBe(400);
+    expect(((await badType.json()) as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
+
+    const badLocale = await send({ type: 'page_view', path: '/en', locale: 'xx' });
+    expect(badLocale.status).toBe(400);
+    expect(await allEvents()).toHaveLength(0);
+
+    const ok = await send({ type: 'page_view', path: '/id', locale: 'id' });
+    expect(ok.status).toBe(204);
+    const [stored] = await allEvents();
+    expect(stored!.localeId).toBe(await lookupIdOf(db, 'locale', 'id'));
+  });
+
+  it('rejects a contact message with an unknown locale code with 400', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ success: true })));
+    const res = await app.request(
+      '/v1/contact',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Real Person',
+          email: 'person@example.com',
+          body: 'Hello, I would like to discuss a backend engineering role.',
+          locale: 'xx',
+          turnstileToken: 'valid-dev-token',
+        }),
+      },
+      env
+    );
+    vi.unstubAllGlobals();
+    expect(res.status).toBe(400);
+    expect(await allMessages()).toHaveLength(0);
   });
 });
 

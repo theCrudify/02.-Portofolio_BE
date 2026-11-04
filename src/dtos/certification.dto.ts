@@ -14,7 +14,7 @@ export const createCertificationSchema = z.object({
   title: z.record(z.string()),
   issuer: z.string().min(1).max(120),
   issueDate: z.string(),
-  type: z.enum(['certification', 'course', 'bootcamp', 'training']),
+  type: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/),
   credentialUrl: z.string().url().optional().nullable(),
   credentialId: z.string().optional().nullable(),
   skills: z.array(z.string()).default([]),

@@ -1,3 +1,5 @@
+import { findItem } from '@/services/content-store';
+import { lk } from '@/db/queries/lookups';
 import { eq } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import { auditLogs } from '@/db/schema';
@@ -5,12 +7,7 @@ import type { ResourceConfig } from '@/services/resource-registry';
 
 export class DeleteContentRepository extends BaseRepository {
   async findById(config: ResourceConfig, id: string): Promise<Record<string, unknown> | null> {
-    const rows = (await this.db
-      .select()
-      .from(config.table)
-      .where(eq(config.table.id, id))
-      .limit(1)) as Record<string, unknown>[];
-    return rows[0] ?? null;
+    return findItem(this.db, config, id);
   }
 
   async softDelete(config: ResourceConfig, id: string): Promise<void> {
@@ -36,7 +33,7 @@ export class DeleteContentRepository extends BaseRepository {
   ): Promise<void> {
     await this.db.insert(auditLogs).values({
       userId,
-      action,
+      actionId: lk('audit_action', action),
       resource: resource.slice(0, 40),
       resourceId,
       summary,

@@ -1,254 +1,131 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { Database } from '../db/client';
-import {
-  profile,
-  projects,
-  experiences,
-  education,
-  certifications,
-  technologies,
-  activities,
-  achievements,
-  publications,
-} from '../db/schema';
-import { pickLocale } from '../lib/locale';
+import type { SupportedLocale } from '../lib/locale';
+import { toContext } from '../repositories/context.repository';
+import { DrizzleSiteRepository } from '../repositories/site.repository';
+import { toPublicProfile } from './serializers';
+import { serializeCollections } from './site.service';
 
+/** An export preset with its child rows resolved to codes (see document.service). */
 export interface ExportPresetRow {
   id: string;
   slug: string;
   name: string;
-  template: 'full' | 'one_page' | 'ats';
-  locale: 'en' | 'id';
-  sections: { key: string; limit?: number }[];
-  itemFilter: {
-    featuredOnly?: boolean;
-    sinceYears?: number;
-    technologyIds?: string[];
-  };
+  template: string; // export_template code
+  locale: string; // locale code
+  featuredOnly: boolean;
+  sinceYears: number | null;
   isPublic: boolean;
+  sections: { key: string; limit: number | null }[]; // key = site_section code
+  technologyIds: string[];
 }
 
-export async function buildExport(
-  db: Database,
-  preset: ExportPresetRow,
-  localeOverride?: 'en' | 'id'
-) {
-  const loc = localeOverride ?? preset.locale ?? 'en';
-  const filter = preset.itemFilter ?? {};
-  const cutoffDateStr = filter.sinceYears
-    ? new Date(Date.now() - filter.sinceYears * 365.25 * 24 * 60 * 60 * 1000)
-        .toISOString()
-        .slice(0, 10)
+const toLocale = (code: string | null | undefined): SupportedLocale => (code === 'id' ? 'id' : 'en');
+
+async function loadEverything(db: Database, locale: SupportedLocale) {
+  const raw = await new DrizzleSiteRepository(db).fetchSiteAggregate();
+  const ctx = toContext(raw.context, locale);
+  const profile = toPublicProfile(raw.profileRows[0] ?? null, ctx, {
+    socials: raw.socialRows,
+    languages: raw.languageRows,
+    interests: raw.interestRows,
+  });
+  return { raw, collections: serializeCollections(raw, ctx), profile };
+}
+
+export async function buildExport(db: Database, preset: ExportPresetRow, localeOverride?: SupportedLocale) {
+  const loc = localeOverride ?? toLocale(preset.locale);
+  const cutoff = preset.sinceYears
+    ? new Date(Date.now() - preset.sinceYears * 365.25 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     : null;
+  const { raw, collections: c, profile } = await loadEverything(db, loc);
+  const allowedTech = new Set(preset.technologyIds);
+  const allowedSlugs = new Set(raw.techRows.filter((t) => allowedTech.has(t.id)).map((t) => t.slug));
 
-  const [profRow] = await db.select().from(profile).where(eq(profile.id, 1)).limit(1);
+  const pick: Record<string, () => unknown[]> = {
+    projects: () =>
+      c.projects
+        .filter((p) => !preset.featuredOnly || p.featured)
+        .filter((p) => !cutoff || !p.periodStart || p.periodStart >= cutoff),
+    experience: () => c.experiences.filter((e) => !cutoff || e.startDate >= cutoff),
+    education: () => c.education,
+    skills: () =>
+      allowedTech.size === 0
+        ? c.technologies
+        : c.technologies
+            .map((g) => ({ ...g, items: g.items.filter((t) => allowedSlugs.has(t.slug)) }))
+            .filter((g) => g.items.length > 0),
+    certifications: () => c.certifications.filter((cert) => !preset.featuredOnly || cert.featured),
+    activities: () => c.activities,
+    achievements: () => c.achievements,
+    publications: () => c.publications,
+    testimonials: () => c.testimonials,
+  };
 
-  const sectionData: Record<string, unknown> = {};
-
+  // Keyed by section code, in the preset's order (object keys keep insertion order).
+  const sections: Record<string, unknown[]> = {};
   for (const sec of preset.sections) {
-    const limit = sec.limit ?? 50;
-
-    if (sec.key === 'projects') {
-      let rows = await db
-        .select()
-        .from(projects)
-        .where(and(eq(projects.status, 'published'), isNull(projects.deletedAt)))
-        .orderBy(asc(projects.sortOrder));
-
-      if (filter.featuredOnly) {
-        rows = rows.filter((r) => r.featured);
-      }
-      if (cutoffDateStr) {
-        rows = rows.filter((r) => !r.periodStart || r.periodStart >= cutoffDateStr);
-      }
-      sectionData.projects = rows.slice(0, limit).map((r) => ({
-        id: r.id,
-        slug: r.slug,
-        title: pickLocale(r, 'title', loc),
-        summary: pickLocale(r, 'summary', loc),
-        role: r.role,
-        periodStart: r.periodStart,
-        periodEnd: r.periodEnd,
-        metrics: r.metrics,
-      }));
-    } else if (sec.key === 'experience' || sec.key === 'experiences') {
-      let rows = await db
-        .select()
-        .from(experiences)
-        .where(and(eq(experiences.status, 'published'), isNull(experiences.deletedAt)))
-        .orderBy(asc(experiences.sortOrder));
-
-      if (cutoffDateStr) {
-        rows = rows.filter((r) => !r.startDate || r.startDate >= cutoffDateStr);
-      }
-      sectionData.experiences = rows.slice(0, limit).map((r) => ({
-        id: r.id,
-        company: r.company,
-        role: pickLocale(r, 'role', loc),
-        location: r.location,
-        startDate: r.startDate,
-        endDate: r.endDate,
-        description: pickLocale(r, 'description', loc),
-        achievements: r.achievements,
-      }));
-    } else if (sec.key === 'education') {
-      const rows = await db
-        .select()
-        .from(education)
-        .where(and(eq(education.status, 'published'), isNull(education.deletedAt)))
-        .orderBy(asc(education.sortOrder));
-      sectionData.education = rows.slice(0, limit).map((r) => ({
-        id: r.id,
-        institution: r.institution,
-        degree: r.degree,
-        field: pickLocale(r, 'field', loc),
-        startDate: r.startDate,
-        endDate: r.endDate,
-        gpa: r.gpa,
-      }));
-    } else if (sec.key === 'skills' || sec.key === 'technologies') {
-      let rows = await db
-        .select()
-        .from(technologies)
-        .where(and(eq(technologies.status, 'published'), isNull(technologies.deletedAt)))
-        .orderBy(asc(technologies.sortOrder));
-      if (filter.technologyIds && filter.technologyIds.length > 0) {
-        const allowSet = new Set(filter.technologyIds);
-        rows = rows.filter((r) => allowSet.has(r.id));
-      }
-      sectionData.skills = rows.slice(0, limit);
-    } else if (sec.key === 'certifications') {
-      const rows = await db
-        .select()
-        .from(certifications)
-        .where(and(eq(certifications.status, 'published'), isNull(certifications.deletedAt)))
-        .orderBy(asc(certifications.sortOrder));
-      sectionData.certifications = rows.slice(0, limit);
-    } else if (sec.key === 'activities') {
-      const rows = await db
-        .select()
-        .from(activities)
-        .where(and(eq(activities.status, 'published'), isNull(activities.deletedAt)))
-        .orderBy(asc(activities.sortOrder));
-      sectionData.activities = rows.slice(0, limit);
-    } else if (sec.key === 'achievements') {
-      const rows = await db
-        .select()
-        .from(achievements)
-        .where(and(eq(achievements.status, 'published'), isNull(achievements.deletedAt)))
-        .orderBy(asc(achievements.sortOrder));
-      sectionData.achievements = rows.slice(0, limit);
-    } else if (sec.key === 'publications') {
-      const rows = await db
-        .select()
-        .from(publications)
-        .where(and(eq(publications.status, 'published'), isNull(publications.deletedAt)))
-        .orderBy(asc(publications.sortOrder));
-      sectionData.publications = rows.slice(0, limit);
-    }
+    const items = pick[sec.key]?.();
+    if (items) sections[sec.key] = items.slice(0, sec.limit ?? 50);
   }
 
   return {
-    preset: {
-      slug: preset.slug,
-      name: preset.name,
-      template: preset.template,
-      locale: loc,
-    },
-    profile: profRow
-      ? {
-          name: profRow.name,
-          headline: pickLocale(profRow, 'headline', loc),
-          bio: pickLocale(profRow, 'bio', loc),
-          email: profRow.email,
-          location: profRow.location,
-          socials: profRow.socials,
-        }
-      : null,
-    sections: sectionData,
+    preset: { slug: preset.slug, name: preset.name, template: preset.template, locale: loc },
+    profile,
+    sections,
   };
 }
 
-export async function buildJsonResume(db: Database, locale: 'en' | 'id' = 'en') {
-  const [profRow] = await db.select().from(profile).where(eq(profile.id, 1)).limit(1);
-  const expRows = await db
-    .select()
-    .from(experiences)
-    .where(and(eq(experiences.status, 'published'), isNull(experiences.deletedAt)))
-    .orderBy(asc(experiences.sortOrder));
-  const eduRows = await db
-    .select()
-    .from(education)
-    .where(and(eq(education.status, 'published'), isNull(education.deletedAt)))
-    .orderBy(asc(education.sortOrder));
-  const projRows = await db
-    .select()
-    .from(projects)
-    .where(and(eq(projects.status, 'published'), isNull(projects.deletedAt)))
-    .orderBy(asc(projects.sortOrder));
-  const techRows = await db
-    .select()
-    .from(technologies)
-    .where(and(eq(technologies.status, 'published'), isNull(technologies.deletedAt)))
-    .orderBy(asc(technologies.sortOrder));
-  const certRows = await db
-    .select()
-    .from(certifications)
-    .where(and(eq(certifications.status, 'published'), isNull(certifications.deletedAt)))
-    .orderBy(asc(certifications.sortOrder));
-
-  const socialsObj = (profRow?.socials ?? {}) as Record<string, string>;
+/** https://jsonresume.org/schema */
+export async function buildJsonResume(db: Database, locale: SupportedLocale = 'en') {
+  const { collections: c, profile } = await loadEverything(db, locale);
 
   return {
     $schema: 'https://raw.githubusercontent.com/jsonresume/resume-schema/v1.0.0/schema.json',
     basics: {
-      name: profRow?.name ?? '',
-      label: profRow ? pickLocale(profRow, 'headline', locale) : '',
-      email: profRow?.email ?? '',
-      summary: profRow ? pickLocale(profRow, 'bio', locale) : '',
-      location: {
-        city: profRow?.location ?? '',
-      },
-      profiles: Object.entries(socialsObj).map(([network, url]) => ({
-        network,
-        url,
+      name: profile?.name ?? '',
+      label: profile?.headline ?? '',
+      email: profile?.email ?? '',
+      summary: profile?.bio ?? '',
+      location: { city: profile?.location ?? '' },
+      profiles: (profile?.socials ?? []).map((s) => ({
+        network: s.platform.label,
+        username: s.handle ?? undefined,
+        url: s.url,
       })),
     },
-    work: expRows.map((w) => ({
-      name: w.company,
-      position: pickLocale(w, 'role', locale),
-      url: w.companyUrl ?? undefined,
+    work: c.experiences.map((w) => ({
+      name: w.organization?.name ?? '',
+      position: w.role,
+      url: w.organization?.websiteUrl ?? undefined,
       startDate: w.startDate,
       endDate: w.endDate ?? undefined,
-      summary: pickLocale(w, 'description', locale) ?? undefined,
-      highlights: (w.achievements ?? []).map((a) =>
-        locale === 'id' ? (a.text_id ?? a.text_en) : a.text_en
-      ),
+      summary: w.description ?? undefined,
+      highlights: [...w.responsibilities, ...w.achievements],
     })),
-    education: eduRows.map((e) => ({
-      institution: e.institution,
-      area: pickLocale(e, 'field', locale) ?? undefined,
+    education: c.education.map((e) => ({
+      institution: e.organization?.name ?? '',
+      area: e.field ?? undefined,
       studyType: e.degree ?? undefined,
       startDate: e.startDate ?? undefined,
       endDate: e.endDate ?? undefined,
       score: e.gpa ? String(e.gpa) : undefined,
     })),
-    certificates: certRows.map((c) => ({
-      name: c.name,
-      date: c.issueDate ?? undefined,
-      issuer: c.issuer,
-      url: c.credentialUrl ?? undefined,
+    certificates: c.certifications.map((cert) => ({
+      name: cert.name,
+      date: cert.issueDate ?? undefined,
+      issuer: cert.issuer?.name ?? '',
+      url: cert.credentialUrl ?? undefined,
     })),
-    skills: techRows.map((t) => ({
-      name: t.name,
-      keywords: [t.category],
+    skills: c.technologies.map((g) => ({
+      name: g.group.label,
+      keywords: g.items.map((t) => t.name),
     })),
-    projects: projRows.map((p) => ({
-      name: pickLocale(p, 'title', locale),
-      description: pickLocale(p, 'summary', locale),
+    projects: c.projects.map((p) => ({
+      name: p.title,
+      description: p.summary,
+      highlights: p.responsibilities,
       startDate: p.periodStart ?? undefined,
       endDate: p.periodEnd ?? undefined,
     })),
   };
 }
-

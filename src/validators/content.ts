@@ -1,391 +1,328 @@
 import { z } from 'zod';
 
-const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/*
+ * Admin payloads. Field names are the Drizzle property names of src/db/schema.ts, so a parsed
+ * payload maps 1:1 onto columns. `*Id` fields that point at `lookups` are lookup ids (the admin
+ * picks them from master data); the resource registry checks each belongs to the right group.
+ * Child collections (responsibilities, links, media…) ride along in the same payload and replace
+ * the stored rows when present.
+ */
+
+export const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const slug = z.string().min(1).max(80).regex(slugRegex, 'Invalid slug format');
+const uuid = z.string().uuid();
+const optUuid = uuid.optional().nullable();
 const httpsUrl = z
   .string()
   .url()
   .refine((u) => u.startsWith('https://'), 'URL must start with https://');
-
+const optUrl = httpsUrl.optional().nullable();
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
+const optDate = dateStr.optional().nullable();
+const optText = (max?: number) => (max ? z.string().max(max) : z.string()).optional().nullable();
+const reqText = (max: number) => z.string().min(1).max(max);
+const sortOrder = z.number().int().min(0).optional();
 
 export const reorderSchema = z.object({
   ids: z
-    .array(z.string().uuid())
+    .array(uuid)
     .min(1)
     .max(200)
     .refine((ids) => new Set(ids).size === ids.length, 'Duplicate ids'),
 });
 
-export const projectCreateSchema = z
-  .object({
-    slug: z.string().min(1).max(120).regex(slugRegex, 'Invalid slug format'),
-    titleId: z.string().min(1).max(160),
-    titleEn: z.string().min(1).max(160),
-    subtitleId: z.string().max(240).optional().nullable(),
-    subtitleEn: z.string().max(240).optional().nullable(),
-    summaryId: z.string().min(1).max(600),
-    summaryEn: z.string().min(1).max(600),
-    problemId: z.string().optional().nullable(),
-    problemEn: z.string().optional().nullable(),
-    solutionId: z.string().optional().nullable(),
-    solutionEn: z.string().optional().nullable(),
-    roleId: z.string().max(120).optional().nullable(),
-    roleEn: z.string().max(120).optional().nullable(),
-    teamSize: z.number().int().min(1).max(1000).optional().nullable(),
-    durationMonths: z.number().int().min(1).max(240).optional().nullable(),
-    clientOrContextId: z.string().max(160).optional().nullable(),
-    clientOrContextEn: z.string().max(160).optional().nullable(),
-    category: z.enum(['web', 'mobile', 'backend', 'ai', 'devops', 'design', 'other']).optional(),
-    projectStatus: z.enum(['completed', 'in_progress', 'archived']).optional(),
-    highlightsId: z.array(z.string().min(1).max(300)).max(20).optional(),
-    highlightsEn: z.array(z.string().min(1).max(300)).max(20).optional(),
-    metrics: z
-      .array(
-        z.object({
-          label_id: z.string().min(1).max(120),
-          label_en: z.string().min(1).max(120),
-          value: z.string().min(1).max(80),
-        })
-      )
-      .max(12)
-      .optional(),
-    coverMediaId: z.string().uuid().optional().nullable(),
-    heroVideoMediaId: z.string().uuid().optional().nullable(),
-    startedAt: dateStr.optional().nullable(),
-    CompletedAt: dateStr.optional().nullable(),
-    completedAt: dateStr.optional().nullable(),
-    isFeatured: z.boolean().optional(),
-    featuredOrder: z.number().int().optional().nullable(),
-    sortOrder: z.number().int().optional(),
-    confirmSlugChange: z.boolean().optional(),
-  })
-  .refine(
-    (d) => {
-      const end = d.completedAt ?? d.CompletedAt;
-      if (d.startedAt && end) return end >= d.startedAt;
-      return true;
-    },
-    { message: 'completedAt must be >= startedAt', path: ['completedAt'] }
-  );
+/* ---------- child collections ---------- */
 
-export const projectUpdateSchema = projectCreateSchema;
+export const bulletItem = z.object({ textEn: reqText(500), textId: optText(500) });
+const bullets = z.array(bulletItem).max(30);
 
-export const technologySchema = z.object({
-  slug: z.string().min(1).max(80).regex(slugRegex),
-  name: z.string().min(1).max(80),
-  category: z.enum(['language', 'framework', 'database', 'devops', 'cloud', 'tool', 'other']),
-  iconKey: z.string().max(80).optional().nullable(),
-  iconMediaId: z.string().uuid().optional().nullable(),
-  proficiency: z.number().int().min(1).max(5).optional().nullable(),
-  yearsUsed: z.string().optional().nullable(),
-  isHighlighted: z.boolean().optional(),
-  sortOrder: z.number().int().optional(),
-});
-
-export const experienceSchema = z
-  .object({
-    company: z.string().min(1).max(140),
-    companyUrl: httpsUrl.optional().nullable(),
-    companyLogoMediaId: z.string().uuid().optional().nullable(),
-    roleId: z.string().min(1).max(140),
-    roleEn: z.string().min(1).max(140),
-    employmentType: z.enum([
-      'full_time',
-      'part_time',
-      'contract',
-      'freelance',
-      'internship',
-      'self_employed',
-    ]),
-    location: z.string().max(140).optional().nullable(),
-    workMode: z.enum(['onsite', 'remote', 'hybrid']).optional().nullable(),
-    startDate: dateStr,
-    endDate: dateStr.optional().nullable(),
-    isCurrent: z.boolean().optional(),
-    summaryId: z.string().optional().nullable(),
-    summaryEn: z.string().optional().nullable(),
-    highlightsId: z.array(z.string().min(1).max(300)).max(20).optional(),
-    highlightsEn: z.array(z.string().min(1).max(300)).max(20).optional(),
-    sortOrder: z.number().int().optional(),
-  })
-  .refine((d) => (!d.endDate || d.endDate >= d.startDate) && !(d.isCurrent && d.endDate), {
-    message: 'endDate must be >= startDate and null when isCurrent is true',
-    path: ['endDate'],
-  });
-
-export const educationSchema = z
-  .object({
-    institution: z.string().min(1).max(160),
-    institutionUrl: httpsUrl.optional().nullable(),
-    logoMediaId: z.string().uuid().optional().nullable(),
-    degreeId: z.string().min(1).max(140),
-    degreeEn: z.string().min(1).max(140),
-    fieldOfStudyId: z.string().max(140).optional().nullable(),
-    fieldOfStudyEn: z.string().max(140).optional().nullable(),
-    location: z.string().max(140).optional().nullable(),
-    startDate: dateStr,
-    endDate: dateStr.optional().nullable(),
-    isCurrent: z.boolean().optional(),
-    grade: z.string().max(40).optional().nullable(),
-    descriptionId: z.string().optional().nullable(),
-    descriptionEn: z.string().optional().nullable(),
-    highlightsId: z.array(z.string().min(1).max(300)).max(20).optional(),
-    highlightsEn: z.array(z.string().min(1).max(300)).max(20).optional(),
-    sortOrder: z.number().int().optional(),
-  })
-  .refine((d) => !d.endDate || d.endDate >= d.startDate, {
-    message: 'endDate must be >= startDate',
-    path: ['endDate'],
-  });
-
-export const certificationSchema = z
-  .object({
-    nameId: z.string().min(1).max(180),
-    nameEn: z.string().min(1).max(180),
-    issuer: z.string().min(1).max(140),
-    issuerUrl: httpsUrl.optional().nullable(),
-    badgeMediaId: z.string().uuid().optional().nullable(),
-    certificateMediaId: z.string().uuid().optional().nullable(),
-    issueDate: dateStr,
-    expiryDate: dateStr.optional().nullable(),
-    doesNotExpire: z.boolean().optional(),
-    credentialId: z.string().max(120).optional().nullable(),
-    credentialUrl: httpsUrl.optional().nullable(),
-    descriptionId: z.string().optional().nullable(),
-    descriptionEn: z.string().optional().nullable(),
-    isFeatured: z.boolean().optional(),
-    sortOrder: z.number().int().optional(),
-  })
-  .refine((d) => !d.expiryDate || d.expiryDate >= d.issueDate, {
-    message: 'expiryDate must be >= issueDate',
-    path: ['expiryDate'],
-  });
-
-export const activitySchema = z
-  .object({
-    organization: z.string().min(1).max(160),
-    organizationUrl: httpsUrl.optional().nullable(),
-    logoMediaId: z.string().uuid().optional().nullable(),
-    roleId: z.string().min(1).max(140),
-    roleEn: z.string().min(1).max(140),
-    activityType: z.enum(['organization', 'volunteer', 'community', 'speaking', 'mentoring']),
-    location: z.string().max(140).optional().nullable(),
-    startDate: dateStr,
-    endDate: dateStr.optional().nullable(),
-    isCurrent: z.boolean().optional(),
-    descriptionId: z.string().optional().nullable(),
-    descriptionEn: z.string().optional().nullable(),
-    highlightsId: z.array(z.string().min(1).max(300)).max(20).optional(),
-    highlightsEn: z.array(z.string().min(1).max(300)).max(20).optional(),
-    proofUrl: httpsUrl.optional().nullable(),
-    sortOrder: z.number().int().optional(),
-  })
-  .refine((d) => !d.endDate || d.endDate >= d.startDate, {
-    message: 'endDate must be >= startDate',
-    path: ['endDate'],
-  });
-
-export const achievementSchema = z.object({
-  titleId: z.string().min(1).max(180),
-  titleEn: z.string().min(1).max(180),
-  issuer: z.string().min(1).max(160),
-  category: z
-    .enum(['award', 'hackathon', 'competition', 'scholarship', 'recognition', 'other'])
-    .optional(),
-  level: z.enum(['international', 'national', 'regional', 'campus', 'organization']).optional().nullable(),
-  achievedDate: dateStr,
-  descriptionId: z.string().optional().nullable(),
-  descriptionEn: z.string().optional().nullable(),
-  proofUrl: httpsUrl.optional().nullable(),
-  mediaId: z.string().uuid().optional().nullable(),
-  sortOrder: z.number().int().optional(),
-});
-
-export const publicationSchema = z.object({
-  titleId: z.string().min(1).max(240),
-  titleEn: z.string().min(1).max(240),
-  publicationType: z
-    .enum(['article', 'paper', 'book', 'talk', 'podcast', 'video'])
-    .optional(),
-  publisherOrVenue: z.string().max(180).optional().nullable(),
-  publishedDate: dateStr,
-  url: httpsUrl.optional().nullable(),
-  doi: z.string().max(120).optional().nullable(),
-  authors: z.array(z.string().min(1).max(120)).max(20).optional(),
-  summaryId: z.string().optional().nullable(),
-  summaryEn: z.string().optional().nullable(),
-  coverMediaId: z.string().uuid().optional().nullable(),
-  sortOrder: z.number().int().optional(),
-});
-
-export const testimonialSchema = z.object({
-  authorName: z.string().min(1).max(120),
-  authorRoleId: z.string().min(1).max(140),
-  authorRoleEn: z.string().min(1).max(140),
-  authorCompany: z.string().max(140).optional().nullable(),
-  authorAvatarMediaId: z.string().uuid().optional().nullable(),
-  authorLinkedinUrl: httpsUrl.optional().nullable(),
-  relationshipId: z.string().max(120).optional().nullable(),
-  relationshipEn: z.string().max(120).optional().nullable(),
-  quoteId: z.string().min(1),
-  quoteEn: z.string().min(1),
-  isFeatured: z.boolean().optional(),
-  sortOrder: z.number().int().optional(),
-});
-
-export const profileUpdateSchema = z.object({
-  fullName: z.string().min(1).max(120),
-  headlineId: z.string().min(1).max(200),
-  headlineEn: z.string().min(1).max(200),
-  shortBioId: z.string().min(1).max(500),
-  shortBioEn: z.string().min(1).max(500),
-  longBioId: z.string().min(1),
-  longBioEn: z.string().min(1),
-  location: z.string().min(1).max(120),
-  timezone: z.string().min(1).max(60).optional(),
-  emailPublic: z.string().email().max(160),
-  phonePublic: z.string().max(40).optional().nullable(),
-  availableForHire: z.boolean().optional(),
-  availabilityTextId: z.string().max(160).optional().nullable(),
-  availabilityTextEn: z.string().max(160).optional().nullable(),
-  avatarMediaId: z.string().uuid().optional().nullable(),
-  heroMediaId: z.string().uuid().optional().nullable(),
-  heroVideoMediaId: z.string().uuid().optional().nullable(),
-  yearsOfExperience: z.number().int().min(0).max(80).optional(),
-  socials: z
+export const childSchemas = {
+  responsibilities: bullets,
+  highlights: bullets,
+  achievements: bullets,
+  activities: bullets,
+  metrics: z
+    .array(z.object({ labelEn: reqText(120), labelId: optText(120), value: reqText(60) }))
+    .max(12),
+  projectTechnologies: z.array(z.object({ technologyId: uuid, groupId: uuid })).max(40),
+  links: z
     .array(
       z.object({
-        platform: z.enum([
-          'github',
-          'linkedin',
-          'x',
-          'instagram',
-          'youtube',
-          'dribbble',
-          'behance',
-          'medium',
-          'devto',
-          'scholar',
-          'website',
-          'other',
-        ]),
-        label: z.string().min(1).max(80),
-        url: httpsUrl,
-        handle: z.string().max(80).optional(),
-      })
-    )
-    .max(15)
-    .optional(),
-  stats: z
-    .array(
-      z.object({
-        label_id: z.string().min(1).max(80),
-        label_en: z.string().min(1).max(80),
-        value: z.string().min(1).max(40),
-      })
-    )
-    .max(6)
-    .optional(),
-});
-
-export const siteSettingsUpdateSchema = z.object({
-  siteTitleId: z.string().min(1).max(70),
-  siteTitleEn: z.string().min(1).max(70),
-  siteDescriptionId: z.string().min(1).max(160),
-  siteDescriptionEn: z.string().min(1).max(160),
-  ogImageMediaId: z.string().uuid().optional().nullable(),
-  faviconMediaId: z.string().uuid().optional().nullable(),
-  defaultLocale: z.enum(['id', 'en']).optional(),
-  defaultTheme: z.enum(['light', 'dark', 'system']).optional(),
-  colorPreset: z.enum(['slate', 'forest', 'sunset', 'mono']).optional(),
-  sectionOrder: z
-    .array(
-      z.object({
-        key: z.enum([
-          'hero',
-          'about',
-          'projects',
-          'experiences',
-          'skills',
-          'education',
-          'certifications',
-          'activities',
-          'achievements',
-          'publications',
-          'testimonials',
-          'contact',
-        ]),
-        enabled: z.boolean(),
-        order: z.number().int().min(0),
-      })
+        typeId: uuid,
+        label: reqText(80),
+        url: optUrl,
+        isPrivate: z.boolean().default(false),
+      }),
     )
     .max(20)
-    .optional(),
-  heroCvButtons: z
-    .object({
-      showStandardCv: z.boolean(),
-      showAtsCv: z.boolean(),
-      showDynamicPdf: z.boolean(),
-      primaryVariant: z.enum(['cv_standard', 'cv_ats', 'dynamic']),
-    })
-    .optional(),
-  contactFormEnabled: z.boolean().optional(),
-  notificationEmail: z.string().email().max(160).optional().nullable(),
-  analyticsPublicSummary: z.boolean().optional(),
-  maintenanceMode: z.boolean().optional(),
-});
-
-export const projectTechnologiesSchema = z.object({
-  items: z
+    .refine((items) => items.every((l) => l.isPrivate || l.url), 'Public links need a URL'),
+  media: z
     .array(
       z.object({
-        technologyId: z.string().uuid(),
-        isPrimary: z.boolean().optional(),
-        sortOrder: z.number().int().optional(),
-      })
+        mediaId: uuid,
+        roleId: uuid,
+        captionEn: optText(200),
+        captionId: optText(200),
+      }),
     )
+    .max(40),
+  experienceIds: z.array(z.object({ experienceId: uuid })).max(20),
+  projectIds: z.array(z.object({ projectId: uuid })).max(100),
+  technologyIds: z.array(z.object({ technologyId: uuid })).max(40),
+  socials: z
+    .array(z.object({ platformId: uuid, url: httpsUrl, handle: optText(100) }))
+    .max(20),
+  languages: z
+    .array(z.object({ nameEn: reqText(60), nameId: optText(60), levelId: uuid }))
+    .max(20),
+  interests: z
+    .array(z.object({ labelEn: reqText(80), labelId: optText(80), icon: optText(60) }))
     .max(30),
-});
+  sections: z.array(z.object({ sectionId: uuid, isVisible: z.boolean() })).max(40),
+};
 
-export const projectLinksSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        linkType: z.enum([
-          'live',
-          'repo',
-          'case_study',
-          'figma',
-          'docs',
-          'playstore',
-          'appstore',
-          'video',
-          'other',
-        ]),
-        labelId: z.string().min(1).max(80),
-        labelEn: z.string().min(1).max(80),
-        url: httpsUrl,
-        sortOrder: z.number().int().optional(),
-      })
-    )
-    .max(15),
-});
+/* ---------- resources ---------- */
 
-export const projectMediaSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        mediaId: z.string().uuid(),
-        captionId: z.string().max(240).optional().nullable(),
-        captionEn: z.string().max(240).optional().nullable(),
-        displayKind: z.enum(['gallery', 'before_after', 'video', 'architecture']).optional(),
-        sortOrder: z.number().int().optional(),
-      })
-    )
-    .max(30),
-});
+const projectFields = {
+  slug,
+  titleEn: reqText(120),
+  titleId: optText(120),
+  summaryEn: reqText(200),
+  summaryId: optText(200),
+  typeId: uuid,
+  stateId: uuid,
+  roleEn: optText(120),
+  roleId: optText(120),
+  teamSize: z.number().int().min(1).max(1000).optional().nullable(),
+  clientOrganizationId: optUuid,
+  periodStart: optDate,
+  periodEnd: optDate,
+  problemEn: optText(),
+  problemId: optText(),
+  solutionEn: optText(),
+  solutionId: optText(),
+  resultEn: optText(),
+  resultId: optText(),
+  challengesEn: optText(),
+  challengesId: optText(),
+  coverMediaId: optUuid,
+  architectureMediaId: optUuid,
+  featured: z.boolean().optional(),
+  metaTitleEn: optText(70),
+  metaTitleId: optText(70),
+  metaDescriptionEn: optText(160),
+  metaDescriptionId: optText(160),
+  sortOrder,
+  // children
+  responsibilities: childSchemas.responsibilities.optional(),
+  highlights: childSchemas.highlights.optional(),
+  metrics: childSchemas.metrics.optional(),
+  technologies: childSchemas.projectTechnologies.optional(),
+  links: childSchemas.links.optional(),
+  media: childSchemas.media.optional(),
+  experiences: childSchemas.experienceIds.optional(),
+};
+export const projectCreateSchema = z.object(projectFields);
+export const projectUpdateSchema = z
+  .object(projectFields)
+  .partial()
+  .extend({ confirmSlugChange: z.boolean().optional() });
 
-export const experienceTechnologiesSchema = z.object({
-  technologyIds: z.array(z.string().uuid()).max(30),
-});
+const technologyFields = {
+  name: reqText(60),
+  slug: slug.max(60),
+  categoryId: uuid,
+  icon: optText(120),
+  showOnSkills: z.boolean().optional(),
+  sortOrder,
+};
+export const technologySchema = z.object(technologyFields);
 
+const organizationFields = {
+  name: reqText(160),
+  slug: slug.max(160),
+  typeId: uuid,
+  logoMediaId: optUuid,
+  websiteUrl: optUrl,
+  location: optText(100),
+  descriptionEn: optText(),
+  descriptionId: optText(),
+  isConfidential: z.boolean().optional(),
+  sortOrder,
+};
+export const organizationSchema = z.object(organizationFields);
+
+const experienceFields = {
+  organizationId: uuid,
+  roleEn: reqText(100),
+  roleId: optText(100),
+  employmentTypeId: uuid,
+  location: optText(100),
+  workModeId: optUuid,
+  startDate: dateStr,
+  endDate: optDate,
+  descriptionEn: optText(),
+  descriptionId: optText(),
+  sortOrder,
+  responsibilities: childSchemas.responsibilities.optional(),
+  achievements: childSchemas.achievements.optional(),
+  technologies: childSchemas.technologyIds.optional(),
+  projects: childSchemas.projectIds.optional(),
+};
+export const experienceSchema = z.object(experienceFields);
+
+const educationFields = {
+  organizationId: uuid,
+  degree: optText(100),
+  fieldEn: optText(120),
+  fieldId: optText(120),
+  startDate: optDate,
+  endDate: optDate,
+  gpa: z.string().regex(/^\d{1,2}(\.\d{1,2})?$/).optional().nullable(),
+  gpaScale: z.string().regex(/^\d{1,2}(\.\d{1,2})?$/).optional().nullable(),
+  descriptionEn: optText(),
+  descriptionId: optText(),
+  sortOrder,
+  activities: childSchemas.activities.optional(),
+};
+export const educationSchema = z.object(educationFields);
+
+const certificationFields = {
+  typeId: uuid,
+  name: reqText(160),
+  issuerOrganizationId: uuid,
+  issueDate: optDate,
+  expiryDate: optDate,
+  credentialId: optText(120),
+  credentialUrl: optUrl,
+  imageMediaId: optUuid,
+  featured: z.boolean().optional(),
+  sortOrder,
+};
+export const certificationSchema = z.object(certificationFields);
+
+const activityFields = {
+  typeId: uuid,
+  organizationId: uuid,
+  eventName: optText(160),
+  roleEn: reqText(100),
+  roleId: optText(100),
+  startDate: optDate,
+  endDate: optDate,
+  descriptionEn: optText(),
+  descriptionId: optText(),
+  mediaId: optUuid,
+  linkUrl: optUrl,
+  sortOrder,
+  achievements: childSchemas.achievements.optional(),
+};
+export const activitySchema = z.object(activityFields);
+
+const achievementFields = {
+  titleEn: reqText(160),
+  titleId: optText(160),
+  issuerOrganizationId: optUuid,
+  eventName: optText(160),
+  rank: optText(60),
+  date: optDate,
+  descriptionEn: optText(),
+  descriptionId: optText(),
+  certificateMediaId: optUuid,
+  linkUrl: optUrl,
+  sortOrder,
+};
+export const achievementSchema = z.object(achievementFields);
+
+const publicationFields = {
+  typeId: uuid,
+  title: reqText(200),
+  venue: optText(160),
+  date: optDate,
+  summaryEn: optText(),
+  summaryId: optText(),
+  url: optUrl,
+  videoMediaId: optUuid,
+  sortOrder,
+};
+export const publicationSchema = z.object(publicationFields);
+
+const testimonialFields = {
+  name: reqText(100),
+  position: optText(100),
+  organizationId: optUuid,
+  avatarMediaId: optUuid,
+  relationship: optText(100),
+  quoteEn: reqText(2000),
+  quoteId: optText(2000),
+  linkedinUrl: optUrl,
+  sortOrder,
+};
+export const testimonialSchema = z.object(testimonialFields);
+
+/** Update payloads accept any subset of the create fields. */
+export const partialOf = <T extends z.ZodRawShape>(shape: T) => z.object(shape).partial();
+export const updateSchemas = {
+  technologies: partialOf(technologyFields),
+  organizations: partialOf(organizationFields),
+  experiences: partialOf(experienceFields),
+  education: partialOf(educationFields),
+  certifications: partialOf(certificationFields),
+  activities: partialOf(activityFields),
+  achievements: partialOf(achievementFields),
+  publications: partialOf(publicationFields),
+  testimonials: partialOf(testimonialFields),
+};
+
+/* ---------- singletons ---------- */
+
+export const profileUpdateSchema = z
+  .object({
+    name: reqText(100),
+    headlineEn: reqText(160),
+    headlineId: optText(160),
+    bioEn: reqText(5000),
+    bioId: optText(5000),
+    avatarMediaId: optUuid,
+    location: optText(100),
+    timezone: reqText(64),
+    email: z.string().email().max(254).optional().nullable(),
+    availabilityId: uuid,
+    workPreferenceId: uuid,
+    referencesNoteEn: optText(300),
+    referencesNoteId: optText(300),
+    careerStartDate: optDate,
+    socials: childSchemas.socials.optional(),
+    languages: childSchemas.languages.optional(),
+    interests: childSchemas.interests.optional(),
+  })
+  .partial();
+
+export const siteSettingsUpdateSchema = z
+  .object({
+    themePresetId: uuid,
+    colorModeId: uuid,
+    fontPairId: uuid,
+    heroCvButtonsId: uuid,
+    seoTitleEn: optText(70),
+    seoTitleId: optText(70),
+    seoDescriptionEn: optText(160),
+    seoDescriptionId: optText(160),
+    ogMediaId: optUuid,
+    sections: childSchemas.sections.optional(),
+  })
+  .partial();
+
+/* ---------- master data ---------- */
+
+export const lookupCreateSchema = z.object({
+  groupId: uuid,
+  code: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/, 'Use lowercase letters, digits, _ or -'),
+  labelEn: reqText(120),
+  labelId: optText(120),
+  icon: optText(60),
+  color: optText(40),
+  isActive: z.boolean().optional(),
+  sortOrder,
+});
+// Codes are what code paths match on, so they can't change after creation.
+export const lookupUpdateSchema = lookupCreateSchema.omit({ groupId: true, code: true }).partial();

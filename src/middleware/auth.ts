@@ -1,3 +1,4 @@
+import { selectUsers } from '@/db/queries/users';
 import { eq } from 'drizzle-orm';
 import { getCookie } from 'hono/cookie';
 import { createMiddleware } from 'hono/factory';
@@ -21,9 +22,7 @@ export async function resolveAuthUser(
 
   try {
     const payload = await verifySession(token, jwtSecret);
-    const rows = await db
-      .select()
-      .from(schema.users)
+    const rows = await selectUsers(db)
       .where(eq(schema.users.id, payload.sub));
     const userRow = rows.find((u) => u.id === payload.sub);
 

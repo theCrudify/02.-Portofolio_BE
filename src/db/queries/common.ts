@@ -1,12 +1,13 @@
 import { and, asc, desc, eq, isNull, type AnyColumn, type SQL } from 'drizzle-orm';
+import { lk } from '@/db/queries/lookups';
 
 export interface ContentStatusTable {
-  status: AnyColumn;
+  statusId: AnyColumn;
   deletedAt: AnyColumn;
 }
 
 export function publishedOnly(table: ContentStatusTable): SQL {
-  return and(eq(table.status, 'published'), isNull(table.deletedAt)) as SQL;
+  return and(eq(table.statusId, lk('content_status', 'published')), isNull(table.deletedAt)) as SQL;
 }
 
 export interface PaginateInput {

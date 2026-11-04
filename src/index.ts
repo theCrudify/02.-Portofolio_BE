@@ -8,6 +8,7 @@ import { errorHandler, notFoundHandler } from '@/middleware/error';
 import { requestIdMiddleware } from '@/middleware/request-id';
 import adminAnalytics from '@/routes/admin/analytics';
 import adminDocuments from '@/routes/admin/documents';
+import adminLookups from '@/routes/admin/lookups';
 import adminMedia from '@/routes/admin/media';
 import adminResources from '@/routes/admin/resources';
 import adminSystem from '@/routes/admin/system';
@@ -78,6 +79,7 @@ export function createApp(): OpenAPIHono<AppEnv> {
   app.route('/', eventsAndContactRoute);
   app.route('/v1/auth', authRoute);
   app.route('/v1/admin/users', adminUsersRoute);
+  app.route('/', adminLookups);
   app.route('/', adminMedia);
   app.route('/', adminAnalytics);
   app.route('/', adminDocuments);

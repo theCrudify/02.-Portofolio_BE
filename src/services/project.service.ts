@@ -8,25 +8,20 @@ import {
   DrizzleProjectRepository,
   type IProjectRepository,
 } from '@/repositories/project.repository';
-import {
-  toProjectCard,
-  toProjectDetail,
-  type GroupedTechnologies,
-  type MediaRow,
-  type TechnologyRow,
-} from '@/services/serializers';
+import { toContext } from '@/repositories/context.repository';
+import { toProjectCard, toProjectDetail, type TechnologyRow } from '@/services/serializers';
 
 export interface ListProjectsOptions {
   locale: SupportedLocale;
   technology?: string;
-  type?: 'personal' | 'freelance' | 'company' | 'open_source' | 'hackathon';
+  /** project_type lookup code */
+  type?: string;
   page?: number;
   limit?: number;
 }
 
 /**
- * ProjectService: OOP service managing published projects, case study details,
- * and high-performance tag-based caching.
+ * ProjectService: published projects and case-study details, cached by tag.
  */
 export class ProjectService {
   constructor(
@@ -34,188 +29,111 @@ export class ProjectService {
     private readonly cache: ICacheService = defaultCacheService,
   ) {}
 
-  /**
-   * List published projects with pagination and technology/type filters.
-   * Cached for 180s with tag 'projects'.
-   */
+  /** Published projects, paginated, filtered by technology slug and/or type code (tag 'projects', 180s). */
   async listProjects(options: ListProjectsOptions) {
     const { locale, technology, type } = options;
     const { page, limit, offset } = paginate({ page: options.page, limit: options.limit });
-
-    const cacheKey = `projects:list:${locale}:${type ?? 'all'}:${technology ?? 'all'}:${page}:${limit}`;
+    const cacheKey = `projects:list:v2:${locale}:${type ?? 'all'}:${technology ?? 'all'}:${page}:${limit}`;
 
     return this.cache.remember(
       cacheKey,
       180,
       async () => {
-        const [allPublishedProjects, allPublishedTechs] = await Promise.all([
+        const [allProjects, allTechs, rawContext] = await Promise.all([
           this.projectRepo.findPublishedProjects(),
           this.projectRepo.findPublishedTechnologies(),
+          this.projectRepo.fetchContext(),
         ]);
+        const ctx = toContext(rawContext, locale);
+        const techMap = new Map<string, TechnologyRow>(allTechs.map((t) => [t.id, t]));
 
-        const techMap = new Map<string, TechnologyRow>();
-        let filterTechId: string | null = null;
-        for (const t of allPublishedTechs) {
-          techMap.set(t.id, t);
-          if (technology && t.slug === technology) {
-            filterTechId = t.id;
-          }
-        }
-
-        let filtered = allPublishedProjects;
+        let filtered = allProjects;
         if (type) {
-          filtered = filtered.filter((p) => p.type === type);
+          const typeId = ctx.lookups.idOf('project_type', type);
+          filtered = filtered.filter((p) => p.typeId === typeId);
         }
         if (technology) {
+          const filterTechId = allTechs.find((t) => t.slug === technology)?.id;
           if (!filterTechId) {
-            return {
-              items: [],
-              meta: { page, limit, total: 0 },
-            };
+            return { items: [], meta: { page, limit, total: 0 } };
           }
-          // Query tech links from repository
-          const allRelations = await this.projectRepo.findProjectRelations(
-            allPublishedProjects.map((p) => p.id),
+          const { projTechRows } = await this.projectRepo.findProjectRelations(filtered.map((p) => p.id));
+          const matching = new Set(
+            projTechRows.filter((pt) => pt.technologyId === filterTechId).map((pt) => pt.projectId),
           );
-          const matchingProjectIds = new Set(
-            allRelations.projTechRows
-              .filter((pt) => pt.technologyId === filterTechId)
-              .map((pt) => pt.projectId),
-          );
-          filtered = filtered.filter((p) => matchingProjectIds.has(p.id));
+          filtered = filtered.filter((p) => matching.has(p.id));
         }
 
         const total = filtered.length;
-        const pagedProjects = filtered.slice(offset, offset + limit);
-        if (pagedProjects.length === 0) {
+        const paged = filtered.slice(offset, offset + limit);
+        if (paged.length === 0) {
           return { items: [], meta: { page, limit, total } };
         }
 
-        // Load relations only for the projects on this page.
-        const pageIds = pagedProjects.map((p) => p.id);
-        const { projTechRows, projLinkRows, projMediaRows } =
-          await this.projectRepo.findProjectRelations(pageIds);
+        const { projTechRows, projLinkRows, projClipRows } = await this.projectRepo.findProjectRelations(
+          paged.map((p) => p.id),
+        );
 
-        const mediaRows = await this.projectRepo.loadMedia([
-          ...pagedProjects.map((p) => p.coverMediaId),
-          ...projMediaRows.map((pm) => pm.mediaId),
-        ]);
-
-        const mediaMap = new Map<string, MediaRow>();
-        for (const m of mediaRows) {
-          mediaMap.set(m.id, m);
-        }
-
-        const items = pagedProjects.map((proj) => {
-          const pTechs = projTechRows
+        const items = paged.map((proj) => {
+          const techs = projTechRows
             .filter((pt) => pt.projectId === proj.id)
             .sort((a, b) => a.sortOrder - b.sortOrder)
-            .map((pt) => techMap.get(pt.technologyId))
-            .filter((t): t is TechnologyRow => Boolean(t));
-
-          const pLinks = projLinkRows.filter((pl) => pl.projectId === proj.id);
-          const clipRelation = projMediaRows
-            .filter((pm) => pm.projectId === proj.id && pm.role === 'clip')
+            .flatMap((pt) => techMap.get(pt.technologyId) ?? []);
+          const clip = projClipRows
+            .filter((pm) => pm.projectId === proj.id)
             .sort((a, b) => a.sortOrder - b.sortOrder)[0];
-          const clipMedia = clipRelation ? mediaMap.get(clipRelation.mediaId) : null;
-          const coverMedia = proj.coverMediaId ? mediaMap.get(proj.coverMediaId) : null;
-
-          return toProjectCard(proj, coverMedia, pTechs, pLinks, clipMedia, locale);
+          return toProjectCard(
+            proj,
+            ctx,
+            techs,
+            projLinkRows.filter((pl) => pl.projectId === proj.id),
+            clip?.mediaId ?? null,
+          );
         });
 
-        return {
-          items,
-          meta: { page, limit, total },
-        };
+        return { items, meta: { page, limit, total } };
       },
       ['projects'],
     );
   }
 
-  /**
-   * Get single published project detail by slug with next/previous navigation.
-   * Cached for 300s with tag 'projects'.
-   */
+  /** Published project detail by slug with prev/next navigation (tag 'projects', 300s). */
   async getProjectBySlug(slug: string, locale: SupportedLocale) {
-    const cacheKey = `project:slug:${slug}:${locale}`;
+    const cacheKey = `project:slug:v2:${slug}:${locale}`;
 
     return this.cache.remember(
       cacheKey,
       300,
       async () => {
         const allPublished = await this.projectRepo.findPublishedProjects();
-
         const index = allPublished.findIndex((p) => p.slug === slug);
         if (index === -1) {
           throw notFound(`Project '${slug}' not found`);
         }
 
         const project = allPublished[index]!;
-        const prevRow = index > 0 ? allPublished[index - 1] : null;
-        const nextRow = index < allPublished.length - 1 ? allPublished[index + 1] : null;
+        const ref = (row: (typeof allPublished)[number] | undefined) =>
+          row ? { slug: row.slug, title: pickLocale(row, 'title', locale) ?? row.titleEn } : null;
 
-        const { projTechRows, projLinkRows, projMediaRows, techRows } =
-          await this.projectRepo.findProjectDetailRelations(project.id);
-
-        const mediaRows = await this.projectRepo.loadMedia([
-          project.coverMediaId,
-          project.architectureMediaId,
-          ...projMediaRows.map((pm) => pm.mediaId),
+        const [rel, rawContext] = await Promise.all([
+          this.projectRepo.findProjectDetailRelations(project.id),
+          this.projectRepo.fetchContext(),
         ]);
+        const techMap = new Map<string, TechnologyRow>(rel.techRows.map((t) => [t.id, t]));
 
-        const techMap = new Map<string, TechnologyRow>();
-        for (const t of techRows) {
-          techMap.set(t.id, t);
-        }
-
-        const mediaMap = new Map<string, MediaRow>();
-        for (const m of mediaRows) {
-          mediaMap.set(m.id, m);
-        }
-
-        const techWithGroup = projTechRows
-          .filter((pt) => pt.projectId === project.id)
-          .map((pt) => {
+        return toProjectDetail(project, toContext(rawContext, locale), {
+          technologies: rel.projTechRows.flatMap((pt) => {
             const tech = techMap.get(pt.technologyId);
-            if (!tech) return null;
-            return {
-              tech,
-              group: pt.group as keyof GroupedTechnologies,
-              sortOrder: pt.sortOrder,
-            };
-          })
-          .filter((item): item is NonNullable<typeof item> => item !== null);
-
-        const mediaItems = projMediaRows
-          .filter((pm) => pm.projectId === project.id)
-          .map((pm) => {
-            const media = mediaMap.get(pm.mediaId);
-            if (!media) return null;
-            return { relation: pm, media };
-          })
-          .filter((item): item is NonNullable<typeof item> => item !== null);
-
-        return toProjectDetail(project, {
-          coverMedia: project.coverMediaId ? mediaMap.get(project.coverMediaId) : null,
-          architectureMedia: project.architectureMediaId
-            ? mediaMap.get(project.architectureMediaId)
-            : null,
-          techWithGroup,
-          links: projLinkRows.filter((pl) => pl.projectId === project.id),
-          mediaItems,
-          prev: prevRow
-            ? {
-                slug: prevRow.slug,
-                title: pickLocale(prevRow, 'title', locale) ?? prevRow.titleEn,
-              }
-            : null,
-          next: nextRow
-            ? {
-                slug: nextRow.slug,
-                title: pickLocale(nextRow, 'title', locale) ?? nextRow.titleEn,
-              }
-            : null,
-          locale,
+            return tech ? [{ tech, groupId: pt.groupId, sortOrder: pt.sortOrder }] : [];
+          }),
+          links: rel.projLinkRows,
+          mediaItems: rel.projMediaRows,
+          metrics: rel.metricRows,
+          highlights: rel.highlightRows,
+          responsibilities: rel.responsibilityRows,
+          positions: rel.positionRows,
+          prev: ref(allPublished[index - 1]),
+          next: ref(allPublished[index + 1]),
         });
       },
       ['projects'],

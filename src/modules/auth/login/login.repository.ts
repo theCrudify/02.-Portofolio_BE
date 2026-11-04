@@ -1,12 +1,12 @@
+import { selectUsers } from '@/db/queries/users';
+import { lk } from '@/db/queries/lookups';
 import { eq } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import * as schema from '@/db/schema';
 
 export class LoginRepository extends BaseRepository {
   async findUserByEmail(normalizedEmail: string) {
-    const rows = await this.db
-      .select()
-      .from(schema.users)
+    const rows = await selectUsers(this.db)
       .where(eq(schema.users.email, normalizedEmail));
     return rows.find((u) => u.email.toLowerCase() === normalizedEmail) ?? null;
   }
@@ -29,7 +29,7 @@ export class LoginRepository extends BaseRepository {
   async createAuditLog(userId: string, userName: string): Promise<void> {
     await this.db.insert(schema.auditLogs).values({
       userId,
-      action: 'login',
+      actionId: lk('audit_action', 'login'),
       resource: 'auth',
       resourceId: userId,
       summary: `User ${userName} logged in`,

@@ -1,3 +1,4 @@
+import { lk } from '@/db/queries/lookups';
 import { eq } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import { auditLogs } from '@/db/schema';
@@ -18,7 +19,7 @@ export class ReorderContentRepository extends BaseRepository {
   async writeAudit(userId: string, resource: string, count: number): Promise<void> {
     await this.db.insert(auditLogs).values({
       userId,
-      action: 'reorder',
+      actionId: lk('audit_action', 'reorder'),
       resource: resource.slice(0, 40),
       summary: `Reordered ${count} items`,
     });

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import { media } from '@/db/schema';
-import { writeAuditLog } from '@/services/content.service';
+import { writeAuditLog } from '@/services/audit.service';
 import type { UpdateMediaBodyDto } from './update.dto';
 
 export class UpdateMediaRepository extends BaseRepository {

@@ -1,5 +1,5 @@
 import { BaseRepository } from '@/core/base';
-import { writeAuditLog } from '@/services/content.service';
+import { writeAuditLog } from '@/services/audit.service';
 import { importBackup } from '@/services/system.service';
 
 export class ImportBackupRepository extends BaseRepository {

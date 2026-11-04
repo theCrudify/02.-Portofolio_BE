@@ -10,11 +10,9 @@ import {
   DrizzleCertificationRepository,
   type ICertificationRepository,
 } from '@/repositories/certification.repository';
-import { DrizzleUserRepository, type IUserRepository } from '@/repositories/user.repository';
 import { SiteService } from '@/services/site.service';
 import { ProjectService } from '@/services/project.service';
 import { CertificationService } from '@/services/certification.service';
-import { PublicController } from '@/controllers/public.controller';
 
 /**
  * ServiceContainer: Dependency Injection container holding configured
@@ -27,15 +25,12 @@ export class ServiceContainer {
   public readonly siteRepository: ISiteRepository;
   public readonly projectRepository: IProjectRepository;
   public readonly certificationRepository: ICertificationRepository;
-  public readonly userRepository: IUserRepository;
 
   // Services
   public readonly siteService: SiteService;
   public readonly projectService: ProjectService;
   public readonly certificationService: CertificationService;
 
-  // Controllers
-  public readonly publicController: PublicController;
 
   constructor(db: DbClient, cache: ICacheService = defaultCacheService) {
     this.cache = cache;
@@ -44,7 +39,6 @@ export class ServiceContainer {
     this.siteRepository = new DrizzleSiteRepository(db);
     this.projectRepository = new DrizzleProjectRepository(db);
     this.certificationRepository = new DrizzleCertificationRepository(db);
-    this.userRepository = new DrizzleUserRepository(db);
 
     // Services (Injected with Repositories and Cache)
     this.siteService = new SiteService(this.siteRepository, this.cache);
@@ -54,12 +48,6 @@ export class ServiceContainer {
       this.cache,
     );
 
-    // Controllers (Injected with Services)
-    this.publicController = new PublicController(
-      this.siteService,
-      this.projectService,
-      this.certificationService,
-    );
   }
 }
 

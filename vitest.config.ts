@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { defineConfig } from 'vitest/config';
 
-process.env.WRANGLER_LOG_PATH = path.resolve(__dirname, '.wrangler/logs');
-
-export default defineWorkersConfig({
+// Tests run on Node against PGlite (real Postgres built from drizzle/ migrations); the app code
+// itself only uses Web APIs, so the same handlers run unchanged.
+export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -11,13 +11,10 @@ export default defineWorkersConfig({
   },
   test: {
     globals: true,
+    environment: 'node',
     include: ['test/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/.git/**'],
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: './wrangler.toml' },
-      },
-    },
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
   },
 });
-

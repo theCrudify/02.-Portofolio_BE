@@ -29,13 +29,13 @@ export const changePasswordBodySchema = z.object({
 export const createUserBodySchema = z.object({
   email: z.string().trim().email().max(254),
   name: z.string().trim().min(2).max(100),
-  role: z.enum(['owner', 'editor', 'viewer']),
+  role: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/),
   password: z.string().min(12).max(200).optional(),
 });
 
 export const updateUserBodySchema = z.object({
   name: z.string().trim().min(2).max(100).optional(),
-  role: z.enum(['owner', 'editor', 'viewer']).optional(),
+  role: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).optional(),
   isActive: z.boolean().optional(),
 });
 

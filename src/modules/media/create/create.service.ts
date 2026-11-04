@@ -1,3 +1,4 @@
+import { lk } from '@/db/queries/lookups';
 import type { DbClient } from '@/db/client';
 import { BaseService } from '@/core/base';
 import { validateRegisteredMedia } from '@/lib/cloudinary';
@@ -19,11 +20,9 @@ export class CreateMediaService extends BaseService {
       durationSec: dto.durationSec,
     });
 
-    const dbKind: 'image' | 'video' | 'pdf' = dto.kind === 'document' ? 'pdf' : dto.kind;
-
     const created = await this.repo.insertMedia({
-      provider: 'cloudinary',
-      kind: dbKind,
+      providerId: lk('media_provider', 'cloudinary'),
+      kindId: lk('media_kind', dto.kind),
       publicId: dto.publicId,
       url: dto.url,
       mime: dto.mime ?? null,
@@ -45,9 +44,9 @@ export class CreateMediaService extends BaseService {
       action: 'create',
       resource: 'media',
       resourceId: created.id,
-      summary: `Uploaded ${dbKind} (${dto.publicId})`,
+      summary: `Uploaded ${dto.kind} (${dto.publicId})`,
     });
 
-    return created;
+    return { ...created, kind: dto.kind, provider: 'cloudinary' };
   }
 }

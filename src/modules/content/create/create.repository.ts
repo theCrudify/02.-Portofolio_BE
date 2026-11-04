@@ -1,3 +1,5 @@
+import { createItem } from '@/services/content-store';
+import { lk } from '@/db/queries/lookups';
 import { and, eq, isNull } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import { auditLogs } from '@/db/schema';
@@ -14,21 +16,13 @@ export class CreateContentRepository extends BaseRepository {
   }
 
   async insert(config: ResourceConfig, values: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const createdRows = (await this.db
-      .insert(config.table)
-      .values({
-        ...values,
-        status: 'draft',
-        publishedAt: null,
-      })
-      .returning()) as Record<string, unknown>[];
-    return createdRows[0]!;
+    return createItem(this.db, config, values);
   }
 
   async writeAudit(userId: string, resource: string, resourceId: string): Promise<void> {
     await this.db.insert(auditLogs).values({
       userId,
-      action: 'create',
+      actionId: lk('audit_action', 'create'),
       resource: resource.slice(0, 40),
       resourceId,
       summary: `Created ${resource}`,

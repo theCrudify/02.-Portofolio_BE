@@ -35,14 +35,14 @@ export class CreateUserService extends BaseService<CreateUserRepository> {
       passwordHash,
     });
 
-    await this.repo.createAuditLog(actor.id, created.id, created.email, created.role);
+    await this.repo.createAuditLog(actor.id, created.id, created.email, input.role);
 
     return {
       user: {
         id: created.id,
         email: created.email,
         name: created.name,
-        role: created.role,
+        role: input.role,
         isActive: created.isActive,
       },
       initialPassword,

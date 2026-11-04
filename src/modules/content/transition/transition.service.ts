@@ -1,7 +1,7 @@
 import { BaseService } from '@/core/base';
 import { AppError } from '@/lib/errors';
 import { revalidate } from '@/lib/revalidate';
-import type { ContentStatus } from '@/services/content.service';
+import type { ContentStatus } from '@/services/content-store';
 import type { ResourceConfig } from '@/services/resource-registry';
 import type { AuthUser, Env } from '@/types/env';
 import type { TransitionActionDto } from './transition.dto';

@@ -1,3 +1,4 @@
+import { assertLookupCodes, lk } from '@/db/queries/lookups';
 import type { DbClient } from '@/db/client';
 import { BaseService } from '@/core/base';
 import { AppError } from '@/lib/errors';
@@ -59,12 +60,13 @@ export class SubmitContactService extends BaseService {
       throw new AppError(403, 'TURNSTILE_FAILED', 'Turnstile bot verification failed.');
     }
 
+    await assertLookupCodes(this.repo.db, { locale: ['locale', dto.locale] });
     const saved = await this.repo.insertMessage({
       name: dto.name,
       email: dto.email,
       subject: dto.subject ?? null,
       body: msgBody,
-      locale: dto.locale ?? 'en',
+      localeId: lk('locale', dto.locale ?? 'en'),
       isRead: false,
       isArchived: false,
     });

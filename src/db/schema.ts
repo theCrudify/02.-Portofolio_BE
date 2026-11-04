@@ -1,6 +1,5 @@
 import {
   pgTable,
-  pgEnum,
   uuid,
   text,
   varchar,
@@ -18,92 +17,12 @@ import {
 import { sql } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 
-/* ---------- Enums ---------- */
-export const userRole = pgEnum('user_role', ['owner', 'editor', 'viewer']);
-export const contentStatus = pgEnum('content_status', ['draft', 'published', 'archived']);
-export const projectType = pgEnum('project_type', [
-  'personal',
-  'freelance',
-  'company',
-  'open_source',
-  'hackathon',
-]);
-export const projectState = pgEnum('project_state', ['live', 'in_development', 'archived']);
-export const techCategory = pgEnum('tech_category', [
-  'frontend',
-  'backend',
-  'database',
-  'devops',
-  'tools',
-  'soft_skill',
-]);
-export const techGroup = pgEnum('tech_group', [
-  'frontend',
-  'backend',
-  'database',
-  'devops',
-  'other',
-]);
-export const linkType = pgEnum('link_type', [
-  'demo',
-  'repo_frontend',
-  'repo_backend',
-  'repo',
-  'api_docs',
-  'postman',
-  'design',
-  'video',
-  'article',
-  'other',
-]);
-export const employmentType = pgEnum('employment_type', [
-  'full_time',
-  'part_time',
-  'internship',
-  'freelance',
-  'contract',
-]);
-export const workMode = pgEnum('work_mode', ['onsite', 'hybrid', 'remote']);
-export const availability = pgEnum('availability', ['open_to_work', 'freelance', 'not_available']);
-export const certType = pgEnum('cert_type', ['certification', 'course', 'bootcamp', 'training']);
-export const activityType = pgEnum('activity_type', ['volunteer', 'committee', 'organization']);
-export const publicationType = pgEnum('publication_type', [
-  'article',
-  'paper',
-  'talk',
-  'workshop',
-  'podcast',
-]);
-export const mediaProvider = pgEnum('media_provider', ['cloudinary', 'youtube', 'vimeo', 'loom']);
-export const mediaKind = pgEnum('media_kind', ['image', 'pdf', 'video']);
-export const projectMediaRole = pgEnum('project_media_role', ['gallery', 'demo_video', 'clip']);
-export const documentType = pgEnum('document_type', ['cv', 'portfolio_pdf', 'other']);
-export const locale = pgEnum('locale', ['en', 'id']);
-export const exportTemplate = pgEnum('export_template', ['full', 'one_page', 'ats']);
-export const heroCvButtons = pgEnum('hero_cv_buttons', ['uploaded', 'export', 'both']);
-export const eventType = pgEnum('event_type', [
-  'page_view',
-  'link_click',
-  'cv_download',
-  'export_download',
-  'share_open',
-  'video_play',
-]);
-export const auditAction = pgEnum('audit_action', [
-  'create',
-  'update',
-  'delete',
-  'delete_permanent',
-  'publish',
-  'unpublish',
-  'archive',
-  'restore',
-  'reorder',
-  'login',
-  'logout',
-  'settings',
-  'import',
-]);
+/*
+ * No Postgres enums and no array/object columns: every closed list of values lives in
+ * `lookups` (grouped by `lookup_groups`), and every repeating value is its own row in a
+ * child table. Code refers to lookup rows by (group code, value code); see
+ * src/services/lookup.service.ts.
+ */
 
 /* ---------- Helpers ---------- */
 const id = () =>
@@ -117,24 +36,73 @@ const timestamps = {
     .defaultNow()
     .$onUpdate(() => new Date()),
 };
+const lookupRef = (name: string) =>
+  uuid(name).references(() => lookups.id, { onDelete: 'restrict' });
 const contentColumns = {
-  status: contentStatus('status').notNull().default('draft'),
+  statusId: lookupRef('status_id').notNull(), // lookup group: content_status
   publishedAt: timestamp('published_at', { withTimezone: true }),
   sortOrder: integer('sort_order').notNull().default(0),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 };
 const mediaRef = (name: string) => uuid(name).references(() => media.id, { onDelete: 'set null' });
+const orgRef = (name: string) =>
+  uuid(name).references(() => organizations.id, { onDelete: 'set null' });
+/** Bilingual bullet row owned by a parent (responsibilities, highlights, achievements…). */
+const bulletColumns = {
+  textEn: text('text_en').notNull(),
+  textId: text('text_id'),
+  sortOrder: integer('sort_order').notNull().default(0),
+};
 
-/* ---------- A. Akses & keamanan ---------- */
+/* ---------- 0. Master data ---------- */
+export const lookupGroups = pgTable(
+  'lookup_groups',
+  {
+    id: id(),
+    code: varchar('code', { length: 60 }).notNull(),
+    nameEn: varchar('name_en', { length: 100 }).notNull(),
+    nameId: varchar('name_id', { length: 100 }),
+    descriptionEn: varchar('description_en', { length: 300 }),
+    descriptionId: varchar('description_id', { length: 300 }),
+    isSystem: boolean('is_system').notNull().default(false), // values drive code; rows can't be deleted
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('lookup_groups_code_uq').on(t.code)],
+);
+
+export const lookups = pgTable(
+  'lookups',
+  {
+    id: id(),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => lookupGroups.id, { onDelete: 'restrict' }),
+    code: varchar('code', { length: 60 }).notNull(),
+    labelEn: varchar('label_en', { length: 120 }).notNull(),
+    labelId: varchar('label_id', { length: 120 }),
+    icon: varchar('icon', { length: 60 }),
+    color: varchar('color', { length: 40 }), // design token name, e.g. "warning"
+    isSystem: boolean('is_system').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('lookups_group_code_uq').on(t.groupId, t.code),
+    index('lookups_group_sort_idx').on(t.groupId, t.sortOrder),
+  ],
+);
+
+/* ---------- A. Access & security ---------- */
 export const users = pgTable(
   'users',
   {
     id: id(),
     email: varchar('email', { length: 254 }).notNull(),
     name: varchar('name', { length: 100 }).notNull(),
-    passwordHash: text('password_hash').notNull(), // format: pbkdf2$sha256$<iterasi>$<saltB64>$<hashB64>
-    role: userRole('role').notNull().default('viewer'),
-    totpSecret: text('totp_secret'), // terenkripsi AES-GCM dengan JWT_SECRET turunan
+    passwordHash: text('password_hash').notNull(), // pbkdf2$sha256$<iterations>$<saltB64>$<hashB64>
+    roleId: lookupRef('role_id').notNull(), // user_role
+    totpSecret: text('totp_secret'),
     totpEnabled: boolean('totp_enabled').notNull().default(false),
     tokenVersion: integer('token_version').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
@@ -161,7 +129,7 @@ export const auditLogs = pgTable(
   {
     id: id(),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
-    action: auditAction('action').notNull(),
+    actionId: lookupRef('action_id').notNull(), // audit_action
     resource: varchar('resource', { length: 40 }).notNull(),
     resourceId: varchar('resource_id', { length: 64 }),
     summary: varchar('summary', { length: 300 }),
@@ -173,15 +141,15 @@ export const auditLogs = pgTable(
   ],
 );
 
-/* ---------- D (dideklarasikan lebih awal karena direferensikan): media ---------- */
+/* ---------- Media (declared early: referenced everywhere) ---------- */
 export const media = pgTable(
   'media',
   {
     id: id(),
-    provider: mediaProvider('provider').notNull(),
-    kind: mediaKind('kind').notNull(),
-    publicId: varchar('public_id', { length: 255 }), // Cloudinary public_id
-    embedId: varchar('embed_id', { length: 64 }), // ID video YouTube/Vimeo/Loom
+    providerId: lookupRef('provider_id').notNull(), // media_provider
+    kindId: lookupRef('kind_id').notNull(), // media_kind
+    publicId: varchar('public_id', { length: 255 }),
+    embedId: varchar('embed_id', { length: 64 }),
     url: text('url').notNull(),
     mime: varchar('mime', { length: 100 }),
     width: integer('width'),
@@ -198,10 +166,33 @@ export const media = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index('media_kind_idx').on(t.kind), index('media_time_idx').on(t.createdAt)],
+  (t) => [index('media_kind_idx').on(t.kindId), index('media_time_idx').on(t.createdAt)],
 );
 
-/* ---------- B. Profil & pengaturan ---------- */
+/* ---------- Organizations (companies, campuses, issuers, communities, clients) ---------- */
+export const organizations = pgTable(
+  'organizations',
+  {
+    id: id(),
+    name: varchar('name', { length: 160 }).notNull(),
+    slug: varchar('slug', { length: 160 }).notNull(),
+    typeId: lookupRef('type_id').notNull(), // organization_type
+    logoMediaId: mediaRef('logo_media_id'),
+    websiteUrl: text('website_url'),
+    location: varchar('location', { length: 100 }),
+    descriptionEn: text('description_en'),
+    descriptionId: text('description_id'),
+    isConfidential: boolean('is_confidential').notNull().default(false), // show a generic label publicly
+    ...contentColumns,
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('organizations_slug_uq').on(t.slug),
+    index('organizations_type_idx').on(t.typeId),
+  ],
+);
+
+/* ---------- B. Profile & settings ---------- */
 export const profile = pgTable('profile', {
   id: smallint('id').primaryKey().default(1),
   name: varchar('name', { length: 100 }).notNull(),
@@ -213,48 +204,60 @@ export const profile = pgTable('profile', {
   location: varchar('location', { length: 100 }),
   timezone: varchar('timezone', { length: 64 }).notNull().default('Asia/Jakarta'),
   email: varchar('email', { length: 254 }),
-  socials: jsonb('socials').$type<Record<string, string>>().notNull().default({}),
-  availability: availability('availability').notNull().default('open_to_work'),
-  workPreference: workMode('work_preference').notNull().default('remote'),
-  languages: jsonb('languages')
-    .$type<{ name: string; level: string }[]>()
-    .notNull()
-    .default([]),
-  interests: jsonb('interests')
-    .$type<{ label_en: string; label_id?: string; icon?: string }[]>()
-    .notNull()
-    .default([]),
+  availabilityId: lookupRef('availability_id').notNull(), // availability
+  workPreferenceId: lookupRef('work_preference_id').notNull(), // work_mode
   referencesNoteEn: varchar('references_note_en', { length: 300 }),
   referencesNoteId: varchar('references_note_id', { length: 300 }),
   careerStartDate: date('career_start_date'),
   ...timestamps,
 });
 
+const profileRef = () =>
+  smallint('profile_id')
+    .notNull()
+    .default(1)
+    .references(() => profile.id, { onDelete: 'cascade' });
+
+export const profileSocials = pgTable(
+  'profile_socials',
+  {
+    id: id(),
+    profileId: profileRef(),
+    platformId: lookupRef('platform_id').notNull(), // social_platform
+    url: text('url').notNull(),
+    handle: varchar('handle', { length: 100 }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('profile_socials_platform_uq').on(t.profileId, t.platformId)],
+);
+
+export const profileLanguages = pgTable('profile_languages', {
+  id: id(),
+  profileId: profileRef(),
+  nameEn: varchar('name_en', { length: 60 }).notNull(),
+  nameId: varchar('name_id', { length: 60 }),
+  levelId: lookupRef('level_id').notNull(), // language_level
+  sortOrder: integer('sort_order').notNull().default(0),
+  ...timestamps,
+});
+
+export const profileInterests = pgTable('profile_interests', {
+  id: id(),
+  profileId: profileRef(),
+  labelEn: varchar('label_en', { length: 80 }).notNull(),
+  labelId: varchar('label_id', { length: 80 }),
+  icon: varchar('icon', { length: 60 }),
+  sortOrder: integer('sort_order').notNull().default(0),
+  ...timestamps,
+});
+
 export const siteSettings = pgTable('site_settings', {
   id: smallint('id').primaryKey().default(1),
-  themePreset: varchar('theme_preset', { length: 20 }).notNull().default('slate'), // slate | forest | sunset | mono
-  colorMode: varchar('color_mode', { length: 10 }).notNull().default('system'), // light | dark | system
-  fontPair: varchar('font_pair', { length: 20 }).notNull().default('geist'), // geist | inter | serif-accent
-  sectionOrder: jsonb('section_order')
-    .$type<string[]>()
-    .notNull()
-    .default([
-      'hero',
-      'about',
-      'projects',
-      'skills',
-      'experience',
-      'education',
-      'certifications',
-      'activities',
-      'achievements',
-      'publications',
-      'testimonials',
-      'github',
-      'contact',
-    ]),
-  hiddenSections: jsonb('hidden_sections').$type<string[]>().notNull().default([]),
-  heroCvButtons: heroCvButtons('hero_cv_buttons').notNull().default('both'),
+  themePresetId: lookupRef('theme_preset_id').notNull(), // theme_preset
+  colorModeId: lookupRef('color_mode_id').notNull(), // color_mode
+  fontPairId: lookupRef('font_pair_id').notNull(), // font_pair
+  heroCvButtonsId: lookupRef('hero_cv_buttons_id').notNull(), // hero_cv_buttons
   seoTitleEn: varchar('seo_title_en', { length: 70 }),
   seoTitleId: varchar('seo_title_id', { length: 70 }),
   seoDescriptionEn: varchar('seo_description_en', { length: 160 }),
@@ -263,22 +266,32 @@ export const siteSettings = pgTable('site_settings', {
   ...timestamps,
 });
 
-/* ---------- C. Konten ---------- */
+/** Home page sections: order and visibility (one row per site_section lookup). */
+export const siteSections = pgTable('site_sections', {
+  sectionId: uuid('section_id')
+    .primaryKey()
+    .references(() => lookups.id, { onDelete: 'cascade' }), // site_section
+  sortOrder: integer('sort_order').notNull().default(0),
+  isVisible: boolean('is_visible').notNull().default(true),
+  ...timestamps,
+});
+
+/* ---------- C. Content ---------- */
 export const technologies = pgTable(
   'technologies',
   {
     id: id(),
     name: varchar('name', { length: 60 }).notNull(),
     slug: varchar('slug', { length: 60 }).notNull(),
-    category: techCategory('category').notNull(),
-    icon: varchar('icon', { length: 60 }), // nama ikon simple-icons/lucide
+    categoryId: lookupRef('category_id').notNull(), // tech_category
+    icon: varchar('icon', { length: 120 }), // simple-icons slug or full URL
     showOnSkills: boolean('show_on_skills').notNull().default(true),
     ...contentColumns,
     ...timestamps,
   },
   (t) => [
     uniqueIndex('technologies_slug_uq').on(t.slug),
-    index('technologies_status_idx').on(t.status, t.sortOrder),
+    index('technologies_status_idx').on(t.statusId, t.sortOrder),
   ],
 );
 
@@ -291,11 +304,12 @@ export const projects = pgTable(
     titleId: varchar('title_id', { length: 120 }),
     summaryEn: varchar('summary_en', { length: 200 }).notNull(),
     summaryId: varchar('summary_id', { length: 200 }),
-    type: projectType('type').notNull(),
-    projectState: projectState('project_state').notNull().default('live'),
-    role: varchar('role', { length: 80 }),
+    typeId: lookupRef('type_id').notNull(), // project_type
+    stateId: lookupRef('state_id').notNull(), // project_state
+    roleEn: varchar('role_en', { length: 120 }),
+    roleId: varchar('role_id', { length: 120 }),
     teamSize: smallint('team_size'),
-    client: varchar('client', { length: 100 }),
+    clientOrganizationId: orgRef('client_organization_id'),
     periodStart: date('period_start'),
     periodEnd: date('period_end'),
     problemEn: text('problem_en'),
@@ -306,14 +320,6 @@ export const projects = pgTable(
     resultId: text('result_id'),
     challengesEn: text('challenges_en'),
     challengesId: text('challenges_id'),
-    metrics: jsonb('metrics')
-      .$type<{ label_en: string; label_id?: string; value: string }[]>()
-      .notNull()
-      .default([]),
-    highlights: jsonb('highlights')
-      .$type<{ text_en: string; text_id?: string }[]>()
-      .notNull()
-      .default([]),
     coverMediaId: mediaRef('cover_media_id'),
     architectureMediaId: mediaRef('architecture_media_id'),
     featured: boolean('featured').notNull().default(false),
@@ -326,21 +332,52 @@ export const projects = pgTable(
   },
   (t) => [
     uniqueIndex('projects_slug_uq').on(t.slug),
-    index('projects_status_idx').on(t.status, t.sortOrder),
+    index('projects_status_idx').on(t.statusId, t.sortOrder),
     index('projects_featured_idx').on(t.featured),
+    index('projects_client_idx').on(t.clientOrganizationId),
   ],
+);
+
+const projectRef = () =>
+  uuid('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' });
+
+/** Job descriptions on a project — usually several. */
+export const projectResponsibilities = pgTable(
+  'project_responsibilities',
+  { id: id(), projectId: projectRef(), ...bulletColumns, ...timestamps },
+  (t) => [index('project_responsibilities_project_idx').on(t.projectId, t.sortOrder)],
+);
+
+export const projectHighlights = pgTable(
+  'project_highlights',
+  { id: id(), projectId: projectRef(), ...bulletColumns, ...timestamps },
+  (t) => [index('project_highlights_project_idx').on(t.projectId, t.sortOrder)],
+);
+
+export const projectMetrics = pgTable(
+  'project_metrics',
+  {
+    id: id(),
+    projectId: projectRef(),
+    labelEn: varchar('label_en', { length: 120 }).notNull(),
+    labelId: varchar('label_id', { length: 120 }),
+    value: varchar('value', { length: 60 }).notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [index('project_metrics_project_idx').on(t.projectId, t.sortOrder)],
 );
 
 export const projectTechnologies = pgTable(
   'project_technologies',
   {
-    projectId: uuid('project_id')
-      .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
+    projectId: projectRef(),
     technologyId: uuid('technology_id')
       .notNull()
       .references(() => technologies.id, { onDelete: 'cascade' }),
-    group: techGroup('group').notNull().default('other'),
+    groupId: lookupRef('group_id').notNull(), // tech_group
     sortOrder: integer('sort_order').notNull().default(0),
   },
   (t) => [
@@ -349,16 +386,15 @@ export const projectTechnologies = pgTable(
   ],
 );
 
+/** Repos (FE / BE / integration services), demos, docs, slides… */
 export const projectLinks = pgTable(
   'project_links',
   {
     id: id(),
-    projectId: uuid('project_id')
-      .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    type: linkType('type').notNull(),
-    label: varchar('label', { length: 60 }).notNull(),
-    url: text('url'), // null jika is_private
+    projectId: projectRef(),
+    typeId: lookupRef('type_id').notNull(), // link_type
+    label: varchar('label', { length: 80 }).notNull(),
+    url: text('url'), // null when is_private
     isPrivate: boolean('is_private').notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
     ...timestamps,
@@ -366,17 +402,16 @@ export const projectLinks = pgTable(
   (t) => [index('project_links_project_idx').on(t.projectId)],
 );
 
+/** Images, PDFs, slide decks and videos attached to a project. */
 export const projectMedia = pgTable(
   'project_media',
   {
     id: id(),
-    projectId: uuid('project_id')
-      .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
+    projectId: projectRef(),
     mediaId: uuid('media_id')
       .notNull()
       .references(() => media.id, { onDelete: 'cascade' }),
-    role: projectMediaRole('role').notNull().default('gallery'),
+    roleId: lookupRef('role_id').notNull(), // project_media_role
     captionEn: varchar('caption_en', { length: 200 }),
     captionId: varchar('caption_id', { length: 200 }),
     sortOrder: integer('sort_order').notNull().default(0),
@@ -391,34 +426,63 @@ export const experiences = pgTable(
   'experiences',
   {
     id: id(),
-    company: varchar('company', { length: 100 }).notNull(),
-    companyMediaId: mediaRef('company_media_id'),
-    companyUrl: text('company_url'),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'restrict' }),
     roleEn: varchar('role_en', { length: 100 }).notNull(),
     roleId: varchar('role_id', { length: 100 }),
-    employmentType: employmentType('employment_type').notNull(),
+    employmentTypeId: lookupRef('employment_type_id').notNull(), // employment_type
     location: varchar('location', { length: 100 }),
-    workMode: workMode('work_mode'),
+    workModeId: lookupRef('work_mode_id'), // work_mode
     startDate: date('start_date').notNull(),
-    endDate: date('end_date'), // null = masih bekerja
+    endDate: date('end_date'), // null = current
     descriptionEn: text('description_en'),
     descriptionId: text('description_id'),
-    achievements: jsonb('achievements')
-      .$type<{ text_en: string; text_id?: string }[]>()
-      .notNull()
-      .default([]),
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('experiences_status_idx').on(t.status, t.sortOrder)],
+  (t) => [
+    index('experiences_status_idx').on(t.statusId, t.sortOrder),
+    index('experiences_org_idx').on(t.organizationId),
+  ],
+);
+
+const experienceRef = () =>
+  uuid('experience_id')
+    .notNull()
+    .references(() => experiences.id, { onDelete: 'cascade' });
+
+/** Job descriptions for the position as a whole. */
+export const experienceResponsibilities = pgTable(
+  'experience_responsibilities',
+  { id: id(), experienceId: experienceRef(), ...bulletColumns, ...timestamps },
+  (t) => [index('experience_responsibilities_exp_idx').on(t.experienceId, t.sortOrder)],
+);
+
+export const experienceAchievements = pgTable(
+  'experience_achievements',
+  { id: id(), experienceId: experienceRef(), ...bulletColumns, ...timestamps },
+  (t) => [index('experience_achievements_exp_idx').on(t.experienceId, t.sortOrder)],
+);
+
+/** A project can span several positions (e.g. internship → full-time at the same company). */
+export const experienceProjects = pgTable(
+  'experience_projects',
+  {
+    experienceId: experienceRef(),
+    projectId: projectRef(),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.experienceId, t.projectId] }),
+    index('ep_project_idx').on(t.projectId),
+  ],
 );
 
 export const experienceTechnologies = pgTable(
   'experience_technologies',
   {
-    experienceId: uuid('experience_id')
-      .notNull()
-      .references(() => experiences.id, { onDelete: 'cascade' }),
+    experienceId: experienceRef(),
     technologyId: uuid('technology_id')
       .notNull()
       .references(() => technologies.id, { onDelete: 'cascade' }),
@@ -433,8 +497,9 @@ export const education = pgTable(
   'education',
   {
     id: id(),
-    institution: varchar('institution', { length: 120 }).notNull(),
-    logoMediaId: mediaRef('logo_media_id'),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'restrict' }),
     degree: varchar('degree', { length: 100 }),
     fieldEn: varchar('field_en', { length: 120 }),
     fieldId: varchar('field_id', { length: 120 }),
@@ -444,24 +509,34 @@ export const education = pgTable(
     gpaScale: numeric('gpa_scale', { precision: 4, scale: 2 }),
     descriptionEn: text('description_en'),
     descriptionId: text('description_id'),
-    activities: jsonb('activities')
-      .$type<{ text_en: string; text_id?: string }[]>()
-      .notNull()
-      .default([]),
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('education_status_idx').on(t.status, t.sortOrder)],
+  (t) => [index('education_status_idx').on(t.statusId, t.sortOrder)],
+);
+
+export const educationActivities = pgTable(
+  'education_activities',
+  {
+    id: id(),
+    educationId: uuid('education_id')
+      .notNull()
+      .references(() => education.id, { onDelete: 'cascade' }),
+    ...bulletColumns,
+    ...timestamps,
+  },
+  (t) => [index('education_activities_edu_idx').on(t.educationId, t.sortOrder)],
 );
 
 export const certifications = pgTable(
   'certifications',
   {
     id: id(),
-    type: certType('type').notNull().default('certification'),
+    typeId: lookupRef('type_id').notNull(), // cert_type
     name: varchar('name', { length: 160 }).notNull(),
-    issuer: varchar('issuer', { length: 100 }).notNull(),
-    issuerMediaId: mediaRef('issuer_media_id'),
+    issuerOrganizationId: uuid('issuer_organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'restrict' }),
     issueDate: date('issue_date'),
     expiryDate: date('expiry_date'),
     credentialId: varchar('credential_id', { length: 120 }),
@@ -471,15 +546,20 @@ export const certifications = pgTable(
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('certifications_status_idx').on(t.status, t.sortOrder)],
+  (t) => [
+    index('certifications_status_idx').on(t.statusId, t.sortOrder),
+    index('certifications_issuer_idx').on(t.issuerOrganizationId),
+  ],
 );
 
 export const activities = pgTable(
   'activities',
   {
     id: id(),
-    type: activityType('type').notNull(),
-    organization: varchar('organization', { length: 120 }).notNull(),
+    typeId: lookupRef('type_id').notNull(), // activity_type
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'restrict' }),
     eventName: varchar('event_name', { length: 160 }),
     roleEn: varchar('role_en', { length: 100 }).notNull(),
     roleId: varchar('role_id', { length: 100 }),
@@ -487,16 +567,25 @@ export const activities = pgTable(
     endDate: date('end_date'),
     descriptionEn: text('description_en'),
     descriptionId: text('description_id'),
-    achievements: jsonb('achievements')
-      .$type<{ text_en: string; text_id?: string }[]>()
-      .notNull()
-      .default([]),
     mediaId: mediaRef('media_id'),
     linkUrl: text('link_url'),
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('activities_status_idx').on(t.status, t.sortOrder)],
+  (t) => [index('activities_status_idx').on(t.statusId, t.sortOrder)],
+);
+
+export const activityAchievements = pgTable(
+  'activity_achievements',
+  {
+    id: id(),
+    activityId: uuid('activity_id')
+      .notNull()
+      .references(() => activities.id, { onDelete: 'cascade' }),
+    ...bulletColumns,
+    ...timestamps,
+  },
+  (t) => [index('activity_achievements_act_idx').on(t.activityId, t.sortOrder)],
 );
 
 export const achievements = pgTable(
@@ -505,7 +594,7 @@ export const achievements = pgTable(
     id: id(),
     titleEn: varchar('title_en', { length: 160 }).notNull(),
     titleId: varchar('title_id', { length: 160 }),
-    issuer: varchar('issuer', { length: 120 }),
+    issuerOrganizationId: orgRef('issuer_organization_id'),
     eventName: varchar('event_name', { length: 160 }),
     rank: varchar('rank', { length: 60 }),
     date: date('date'),
@@ -516,14 +605,14 @@ export const achievements = pgTable(
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('achievements_status_idx').on(t.status, t.sortOrder)],
+  (t) => [index('achievements_status_idx').on(t.statusId, t.sortOrder)],
 );
 
 export const publications = pgTable(
   'publications',
   {
     id: id(),
-    type: publicationType('type').notNull(),
+    typeId: lookupRef('type_id').notNull(), // publication_type
     title: varchar('title', { length: 200 }).notNull(),
     venue: varchar('venue', { length: 160 }),
     date: date('date'),
@@ -534,7 +623,7 @@ export const publications = pgTable(
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('publications_status_idx').on(t.status, t.sortOrder)],
+  (t) => [index('publications_status_idx').on(t.statusId, t.sortOrder)],
 );
 
 export const testimonials = pgTable(
@@ -543,19 +632,19 @@ export const testimonials = pgTable(
     id: id(),
     name: varchar('name', { length: 100 }).notNull(),
     position: varchar('position', { length: 100 }),
-    company: varchar('company', { length: 100 }),
+    organizationId: orgRef('organization_id'),
     avatarMediaId: mediaRef('avatar_media_id'),
-    relationship: varchar('relationship', { length: 100 }), // misal "Manager langsung di PT X"
+    relationship: varchar('relationship', { length: 100 }),
     quoteEn: text('quote_en').notNull(),
     quoteId: text('quote_id'),
     linkedinUrl: text('linkedin_url'),
     ...contentColumns,
     ...timestamps,
   },
-  (t) => [index('testimonials_status_idx').on(t.status, t.sortOrder)],
+  (t) => [index('testimonials_status_idx').on(t.statusId, t.sortOrder)],
 );
 
-/* ---------- D. Dokumen & share ---------- */
+/* ---------- D. Documents & sharing ---------- */
 export const documents = pgTable(
   'documents',
   {
@@ -563,8 +652,8 @@ export const documents = pgTable(
     mediaId: uuid('media_id')
       .notNull()
       .references(() => media.id, { onDelete: 'restrict' }),
-    type: documentType('type').notNull().default('cv'),
-    locale: locale('locale').notNull(),
+    typeId: lookupRef('type_id').notNull(), // document_type
+    localeId: lookupRef('locale_id').notNull(), // locale
     title: varchar('title', { length: 120 }).notNull(),
     version: integer('version').notNull().default(1),
     pageCount: smallint('page_count'),
@@ -573,9 +662,9 @@ export const documents = pgTable(
     ...timestamps,
   },
   (t) => [
-    index('documents_type_locale_idx').on(t.type, t.locale),
+    index('documents_type_locale_idx').on(t.typeId, t.localeId),
     uniqueIndex('documents_one_active_uq')
-      .on(t.type, t.locale)
+      .on(t.typeId, t.localeId)
       .where(sql`${t.isActive} = true`),
   ],
 );
@@ -586,13 +675,10 @@ export const exportPresets = pgTable(
     id: id(),
     slug: varchar('slug', { length: 60 }).notNull(),
     name: varchar('name', { length: 80 }).notNull(),
-    template: exportTemplate('template').notNull().default('full'),
-    locale: locale('locale').notNull().default('en'),
-    sections: jsonb('sections').$type<{ key: string; limit?: number }[]>().notNull(),
-    itemFilter: jsonb('item_filter')
-      .$type<{ featuredOnly?: boolean; sinceYears?: number; technologyIds?: string[] }>()
-      .notNull()
-      .default({}),
+    templateId: lookupRef('template_id').notNull(), // export_template
+    localeId: lookupRef('locale_id').notNull(), // locale
+    featuredOnly: boolean('featured_only').notNull().default(false),
+    sinceYears: smallint('since_years'),
     isPublic: boolean('is_public').notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
     ...timestamps,
@@ -600,12 +686,41 @@ export const exportPresets = pgTable(
   (t) => [uniqueIndex('export_presets_slug_uq').on(t.slug)],
 );
 
+const presetRef = () =>
+  uuid('preset_id')
+    .notNull()
+    .references(() => exportPresets.id, { onDelete: 'cascade' });
+
+export const exportPresetSections = pgTable(
+  'export_preset_sections',
+  {
+    id: id(),
+    presetId: presetRef(),
+    sectionId: lookupRef('section_id').notNull(), // site_section
+    itemLimit: smallint('item_limit'),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [uniqueIndex('eps_preset_section_uq').on(t.presetId, t.sectionId)],
+);
+
+/** Only items using these technologies are exported (empty = no filter). */
+export const exportPresetTechnologies = pgTable(
+  'export_preset_technologies',
+  {
+    presetId: presetRef(),
+    technologyId: uuid('technology_id')
+      .notNull()
+      .references(() => technologies.id, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.presetId, t.technologyId] })],
+);
+
 export const shareLinks = pgTable(
   'share_links',
   {
     id: id(),
-    token: varchar('token', { length: 43 }).notNull(), // 32 byte acak, base64url
-    label: varchar('label', { length: 120 }).notNull(), // misal "PT ABC – Backend Engineer"
+    token: varchar('token', { length: 43 }).notNull(),
+    label: varchar('label', { length: 120 }).notNull(),
     documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
     presetId: uuid('preset_id').references(() => exportPresets.id, { onDelete: 'set null' }),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -618,7 +733,7 @@ export const shareLinks = pgTable(
   (t) => [uniqueIndex('share_links_token_uq').on(t.token)],
 );
 
-/* ---------- E. Interaksi & analytics ---------- */
+/* ---------- E. Interaction & analytics ---------- */
 export const messages = pgTable(
   'messages',
   {
@@ -626,8 +741,8 @@ export const messages = pgTable(
     name: varchar('name', { length: 100 }).notNull(),
     email: varchar('email', { length: 254 }).notNull(),
     subject: varchar('subject', { length: 150 }),
-    body: text('body').notNull(), // maks 5000 karakter (validasi Zod)
-    locale: locale('locale').notNull().default('en'),
+    body: text('body').notNull(),
+    localeId: lookupRef('locale_id').notNull(), // locale
     isRead: boolean('is_read').notNull().default(false),
     isArchived: boolean('is_archived').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -639,23 +754,23 @@ export const events = pgTable(
   'events',
   {
     id: id(),
-    type: eventType('type').notNull(),
+    typeId: lookupRef('type_id').notNull(), // event_type
     path: varchar('path', { length: 300 }).notNull(),
-    locale: locale('locale'),
+    localeId: lookupRef('locale_id'), // locale
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
-    target: varchar('target', { length: 60 }), // jenis link / preset slug / media id
+    target: varchar('target', { length: 60 }),
     shareLinkId: uuid('share_link_id').references(() => shareLinks.id, { onDelete: 'set null' }),
     visitorHash: varchar('visitor_hash', { length: 64 }).notNull(),
     country: varchar('country', { length: 2 }),
     referrer: varchar('referrer', { length: 300 }),
     utmSource: varchar('utm_source', { length: 60 }),
     utmCampaign: varchar('utm_campaign', { length: 60 }),
-    device: varchar('device', { length: 10 }), // mobile | tablet | desktop
+    device: varchar('device', { length: 10 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('events_time_idx').on(t.createdAt),
-    index('events_type_time_idx').on(t.type, t.createdAt),
+    index('events_type_time_idx').on(t.typeId, t.createdAt),
     index('events_project_idx').on(t.projectId),
   ],
 );
@@ -664,18 +779,20 @@ export const dailyStats = pgTable(
   'daily_stats',
   {
     date: date('date').notNull(),
-    type: eventType('type').notNull(),
+    typeId: uuid('type_id')
+      .notNull()
+      .references(() => lookups.id, { onDelete: 'restrict' }), // event_type
     path: varchar('path', { length: 300 }).notNull().default(''),
     target: varchar('target', { length: 60 }).notNull().default(''),
     count: integer('count').notNull().default(0),
     uniqueVisitors: integer('unique_visitors').notNull().default(0),
   },
-  (t) => [primaryKey({ columns: [t.date, t.type, t.path, t.target] })],
+  (t) => [primaryKey({ columns: [t.date, t.typeId, t.path, t.target] })],
 );
 
+/** Raw GitHub API snapshot (external cache, not portfolio data). */
 export const githubCache = pgTable('github_cache', {
   key: varchar('key', { length: 40 }).primaryKey(),
   data: jsonb('data').notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
 });
-

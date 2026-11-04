@@ -2,8 +2,8 @@ import { z } from '@hono/zod-openapi';
 
 export const createDocumentBodySchema = z.object({
   mediaId: z.string().uuid(),
-  type: z.enum(['cv', 'portfolio_pdf', 'other']).default('cv'),
-  locale: z.enum(['en', 'id']),
+  type: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).default('cv'), // document_type code
+  locale: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/), // locale code
   title: z.string().min(1).max(120),
   version: z.number().int().positive().default(1),
   pageCount: z.number().int().positive().optional().nullable(),
@@ -13,24 +13,20 @@ export const createDocumentBodySchema = z.object({
 export const createExportPresetBodySchema = z.object({
   slug: z.string().min(1).max(60).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   name: z.string().min(1).max(80),
-  template: z.enum(['full', 'one_page', 'ats']).default('full'),
-  locale: z.enum(['en', 'id']).default('en'),
+  template: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).default('full'), // export_template code
+  locale: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).default('en'), // locale code
+  featuredOnly: z.boolean().default(false),
+  sinceYears: z.number().int().positive().nullable().default(null),
   sections: z
     .array(
       z.object({
-        key: z.string().min(1).max(40),
-        limit: z.number().int().positive().optional(),
+        key: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/), // site_section code
+        limit: z.number().int().positive().nullable().optional(),
       }),
     )
     .min(1)
     .max(20),
-  itemFilter: z
-    .object({
-      featuredOnly: z.boolean().optional(),
-      sinceYears: z.number().int().positive().optional(),
-      technologyIds: z.array(z.string().uuid()).optional(),
-    })
-    .optional(),
+  technologyIds: z.array(z.string().uuid()).default([]),
   isPublic: z.boolean().default(false),
   sortOrder: z.number().int().default(0),
 });

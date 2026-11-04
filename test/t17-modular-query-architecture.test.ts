@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { getTableName } from 'drizzle-orm';
+import { afterEach, describe, expect, it } from 'vitest';
 import { app } from '@/index';
 import { setTestDb, type DbClient } from '@/db/client';
+import { lk } from '@/db/queries/lookups';
+import { projects, users } from '@/db/schema';
 import { signSession } from '@/lib/jwt';
 import { SESSION_COOKIE_NAME } from '@/middleware/auth';
 import { SqlQueryBuilder, standardQuerySchema } from '@/core/query';
 import * as Modules from '@/modules';
+import { draft, lookupIdOf, published, useTestDb } from './helpers/db';
 
 const TEST_ENV = {
   NODE_ENV: 'test',
@@ -25,104 +27,72 @@ const OWNER_ID = '01950000-0000-7000-8000-000000000001';
 
 const SAMPLE_PROJECTS = [
   {
-    id: '00000000-0000-4000-8000-000000000001',
     slug: 'alpha-cashier',
     titleEn: 'Alpha Cashier POS',
     titleId: 'Kasir Alpha',
     summaryEn: 'Point of sale system built with Go',
     summaryId: 'Sistem kasir berbasis Go',
     type: 'company',
-    status: 'published',
+    status: published,
     featured: true,
     sortOrder: 2,
     createdAt: new Date('2025-01-10T00:00:00Z'),
-    deletedAt: null,
   },
   {
-    id: '00000000-0000-4000-8000-000000000002',
     slug: 'beta-analytics',
     titleEn: 'Beta Analytics Dashboard',
     titleId: 'Dasbor Analitik Beta',
     summaryEn: 'Realtime telemetry dashboard in Next.js',
     summaryId: 'Dasbor telemetri realtime',
     type: 'personal',
-    status: 'draft',
+    status: draft,
     featured: false,
     sortOrder: 1,
     createdAt: new Date('2025-02-15T00:00:00Z'),
-    deletedAt: null,
   },
   {
-    id: '00000000-0000-4000-8000-000000000003',
     slug: 'gamma-gateway',
     titleEn: 'Gamma API Gateway',
     titleId: 'Gateway API Gamma',
     summaryEn: 'High throughput edge router on Cloudflare Workers',
     summaryId: 'Router edge performa tinggi',
     type: 'open_source',
-    status: 'published',
+    status: published,
     featured: true,
     sortOrder: 3,
     createdAt: new Date('2025-03-20T00:00:00Z'),
-    deletedAt: null,
   },
 ];
 
-function createMockDb(): DbClient {
-  const store: Record<string, Record<string, unknown>[]> = {
-    users: [
-      {
-        id: OWNER_ID,
-        email: 'owner@example.com',
-        name: 'Owner',
-        role: 'owner',
-        tokenVersion: 0,
-        totpEnabled: false,
-        isActive: true,
-      },
-    ],
-    projects: SAMPLE_PROJECTS,
-  };
-
-  const buildQueryChain = (rows: Record<string, unknown>[]) => {
-    const chain: Record<string, unknown> = {
-      where: () => buildQueryChain(rows),
-      orderBy: () => buildQueryChain(rows),
-      limit: (n: number) => buildQueryChain(rows.slice(0, n)),
-      offset: (o: number) => buildQueryChain(rows.slice(o)),
-      then: (
-        resolve: (val: Record<string, unknown>[]) => unknown,
-        reject?: (err: unknown) => unknown,
-      ) => Promise.resolve(rows).then(resolve, reject),
-    };
-    return chain;
-  };
-
-  return {
-    $count: (table: unknown) =>
-      Promise.resolve((store[getTableName(table as Parameters<typeof getTableName>[0])] ?? []).length),
-    select: () => ({
-      from: (table: unknown) => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]);
-        return buildQueryChain(store[name] ?? []);
-      },
-    }),
-  } as unknown as DbClient;
-}
-
 async function getOwnerCookie() {
-  const token = await signSession(
-    {
-      sub: OWNER_ID,
-      role: 'owner',
-      tv: 0,
-    },
-    TEST_ENV.JWT_SECRET,
-  );
+  const token = await signSession({ sub: OWNER_ID, role: 'owner', tv: 0 }, TEST_ENV.JWT_SECRET);
   return `${SESSION_COOKIE_NAME}=${token}`;
 }
 
+/** Real migrated DB with the owner user and the sample projects. */
+async function seedDb(): Promise<DbClient> {
+  const db = await useTestDb();
+  await db.insert(users).values({
+    id: OWNER_ID,
+    email: 'owner@example.com',
+    name: 'Owner',
+    passwordHash: 'x',
+    roleId: lk('user_role', 'owner'),
+  });
+  await db.insert(projects).values(
+    SAMPLE_PROJECTS.map(({ type, status, ...p }) => ({
+      ...p,
+      ...status(),
+      typeId: lk('project_type', type),
+      stateId: lk('project_state', 'live'),
+    })),
+  );
+  return db;
+}
+
 describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engine', () => {
+  afterEach(() => setTestDb(null));
+
   it('exports all 8 domain modules and action classes from @/modules', () => {
     expect(Modules.authModuleRoutes).toBeDefined();
     expect(Modules.usersModuleRoutes).toBeDefined();
@@ -155,7 +125,7 @@ describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engin
     const parsedArr = standardQuerySchema.safeParse({ sortBy: '["createdAt","asc"]' });
     expect(parsedArr.success).toBe(false);
 
-    setTestDb(createMockDb());
+    await seedDb();
     const cookie = await getOwnerCookie();
 
     const res = await app.request(
@@ -169,11 +139,10 @@ describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engin
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('VALIDATION_ERROR');
-    setTestDb(null);
   });
 
   it('supports Fast Filter, Search (q / search), Fast Sort (sortBy / sort), Pagination, and Full Query (all=true)', async () => {
-    setTestDb(createMockDb());
+    const db = await seedDb();
     const cookie = await getOwnerCookie();
 
     // 1. Search by keyword "gateway"
@@ -184,7 +153,7 @@ describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engin
     );
     expect(searchRes.status).toBe(200);
     const searchBody = (await searchRes.json()) as {
-      data: typeof SAMPLE_PROJECTS;
+      data: { slug: string; status: string }[];
       meta: { total: number; page: number; totalPages: number };
     };
     expect(searchBody.data).toHaveLength(1);
@@ -199,7 +168,7 @@ describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engin
     );
     expect(filterSortRes.status).toBe(200);
     const filterSortBody = (await filterSortRes.json()) as {
-      data: typeof SAMPLE_PROJECTS;
+      data: { slug: string; status: string }[];
       meta: { total: number };
     };
     expect(filterSortBody.data).toHaveLength(2);
@@ -214,13 +183,31 @@ describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engin
     );
     expect(fullQueryRes.status).toBe(200);
     const fullQueryBody = (await fullQueryRes.json()) as {
-      data: typeof SAMPLE_PROJECTS;
+      data: { slug: string; status: string }[];
       meta: { total: number; all: boolean; hasNextPage: boolean };
     };
     expect(fullQueryBody.data).toHaveLength(3);
     expect(fullQueryBody.data[0]?.slug).toBe('beta-analytics');
     expect(fullQueryBody.meta.all).toBe(true);
     expect(fullQueryBody.meta.hasNextPage).toBe(false);
+
+    // Rows carry the status code, not just the lookup id.
+    expect(fullQueryBody.data.map((p) => [p.slug, p.status])).toEqual([
+      ['beta-analytics', 'draft'],
+      ['alpha-cashier', 'published'],
+      ['gamma-gateway', 'published'],
+    ]);
+
+    // Lookup filters: ?type= takes a code or an id; ?status= takes a code.
+    const slugsOf = async (qs: string) => {
+      const res = await app.request(`/v1/admin/projects?${qs}`, { headers: { Cookie: cookie } }, TEST_ENV as never);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { data: { slug: string }[] }).data.map((p) => p.slug);
+    };
+    expect(await slugsOf('type=open_source')).toEqual(['gamma-gateway']);
+    expect(await slugsOf(`type=${await lookupIdOf(db, 'project_type', 'personal')}`)).toEqual(['beta-analytics']);
+    expect(await slugsOf('status=draft')).toEqual(['beta-analytics']);
+    expect(await slugsOf('status=published&search=cashier')).toEqual(['alpha-cashier']);
 
     // 4. Unit test SqlQueryBuilder.computePagination & buildMeta directly
     const pagination = SqlQueryBuilder.computePagination(2, 10);
@@ -235,6 +222,5 @@ describe('T17 — Feature-Sliced Modular Architecture & Standardized Query Engin
       hasPrevPage: true,
     });
 
-    setTestDb(null);
   });
 });

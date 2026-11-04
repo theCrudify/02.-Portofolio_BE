@@ -1,16 +1,9 @@
 import { z } from '@hono/zod-openapi';
 
 export const recordEventBodySchema = z.object({
-  type: z.enum([
-    'page_view',
-    'link_click',
-    'cv_download',
-    'export_download',
-    'share_open',
-    'video_play',
-  ]),
+  type: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/),
   path: z.string().min(1).max(300),
-  locale: z.enum(['en', 'id']).optional().nullable(),
+  locale: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).optional().nullable(),
   projectId: z.string().uuid().optional().nullable(),
   target: z.string().max(60).optional().nullable(),
   shareLinkId: z.string().uuid().optional().nullable(),

@@ -1,3 +1,4 @@
+import { assertLookupCodes, lk } from '@/db/queries/lookups';
 import type { DbClient } from '@/db/client';
 import { BaseService } from '@/core/base';
 import { getHashSalt, visitorHash } from '@/lib/hash';
@@ -19,10 +20,14 @@ export class RecordEventService extends BaseService {
     const vHash = await visitorHash(rawIp, ua, utcDate, getHashSalt(env));
     const device = deviceOf(ua);
 
+    await assertLookupCodes(this.repo.db, {
+      type: ['event_type', dto.type],
+      locale: ['locale', dto.locale],
+    });
     await this.repo.insertEvent({
-      type: dto.type,
+      typeId: lk('event_type', dto.type),
       path: dto.path,
-      locale: dto.locale ?? null,
+      localeId: dto.locale ? lk('locale', dto.locale) : null,
       projectId: dto.projectId ?? null,
       target: dto.target ?? null,
       shareLinkId: dto.shareLinkId ?? null,

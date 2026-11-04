@@ -2,14 +2,14 @@ import { and, desc, eq, isNull, type SQL } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Database } from '../db/client';
 import { paginate, type PaginateInput } from '../db/queries/common';
+import { lk } from '../db/queries/lookups';
 import {
   achievements,
   activities,
   certifications,
   documents,
-  education,
-  experiences,
   media,
+  organizations,
   profile,
   projectMedia,
   projects,
@@ -18,7 +18,6 @@ import {
   testimonials,
 } from '../db/schema';
 
-type MediaKind = 'image' | 'video' | 'pdf';
 
 // Every column that can point at a media row; `id` is what we report back as the referencing record.
 const MEDIA_REFERENCES: Array<{
@@ -33,10 +32,8 @@ const MEDIA_REFERENCES: Array<{
   { resource: 'projects', table: projects, id: projects.id, column: projects.coverMediaId, deletedAt: projects.deletedAt },
   { resource: 'projects', table: projects, id: projects.id, column: projects.architectureMediaId, deletedAt: projects.deletedAt },
   { resource: 'project_media', table: projectMedia, id: projectMedia.projectId, column: projectMedia.mediaId },
-  { resource: 'experiences', table: experiences, id: experiences.id, column: experiences.companyMediaId, deletedAt: experiences.deletedAt },
-  { resource: 'education', table: education, id: education.id, column: education.logoMediaId, deletedAt: education.deletedAt },
+  { resource: 'organizations', table: organizations, id: organizations.id, column: organizations.logoMediaId, deletedAt: organizations.deletedAt },
   { resource: 'certifications', table: certifications, id: certifications.id, column: certifications.imageMediaId, deletedAt: certifications.deletedAt },
-  { resource: 'certifications', table: certifications, id: certifications.id, column: certifications.issuerMediaId, deletedAt: certifications.deletedAt },
   { resource: 'activities', table: activities, id: activities.id, column: activities.mediaId, deletedAt: activities.deletedAt },
   { resource: 'achievements', table: achievements, id: achievements.id, column: achievements.certificateMediaId, deletedAt: achievements.deletedAt },
   { resource: 'publications', table: publications, id: publications.id, column: publications.videoMediaId, deletedAt: publications.deletedAt },
@@ -63,10 +60,10 @@ export async function createMedia(db: Database, values: typeof media.$inferInser
   return created!;
 }
 
-export async function listMedia(db: Database, query: PaginateInput & { kind?: MediaKind }) {
+export async function listMedia(db: Database, query: PaginateInput & { kind?: string }) {
   const { page, limit, offset } = paginate({ page: query.page, limit: query.limit ?? 50 });
   const conds: SQL[] = [isNull(media.deletedAt)];
-  if (query.kind) conds.push(eq(media.kind, query.kind));
+  if (query.kind) conds.push(eq(media.kindId, lk('media_kind', query.kind)));
   const where = and(...conds);
   const [rows, total] = await Promise.all([
     db.select().from(media).where(where).orderBy(desc(media.createdAt)).limit(limit).offset(offset),

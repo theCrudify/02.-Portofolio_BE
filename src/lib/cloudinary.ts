@@ -25,11 +25,12 @@ export const UPLOAD_RULES: Record<UploadKind, UploadConfig> = {
     allowedFormats: ['mp4', 'webm'],
     maxDurationSec: 30,
   },
+  // Project documentation: PDFs plus slide decks and office files.
   document: {
     folder: 'portfolio/docs',
     resourceType: 'raw',
-    maxBytes: 15 * 1024 * 1024, // 15 MB
-    allowedFormats: ['pdf'],
+    maxBytes: 25 * 1024 * 1024, // 25 MB
+    allowedFormats: ['pdf', 'pptx', 'ppt', 'key', 'odp', 'docx', 'xlsx'],
   },
   pdf: {
     folder: 'portfolio/docs',
@@ -59,8 +60,8 @@ export async function signCloudinaryParams(
   return sha1Hex(`${sorted}${apiSecret}`);
 }
 
-export async function signUpload(env: Env, kind: UploadKind, timestamp?: number) {
-  const rule = UPLOAD_RULES[kind];
+export async function signUpload(env: Env, kind: string, timestamp?: number) {
+  const rule = UPLOAD_RULES[kind as UploadKind];
   if (!rule) {
     throw new AppError(400, 'VALIDATION_ERROR', `Invalid media kind "${kind}".`);
   }
@@ -91,11 +92,14 @@ export async function signUpload(env: Env, kind: UploadKind, timestamp?: number)
 }
 
 export function validateRegisteredMedia(input: {
-  kind: UploadKind;
+  kind: string;
   bytes?: number | null;
   durationSec?: number | null;
 }) {
-  const rule = UPLOAD_RULES[input.kind];
+  const rule = UPLOAD_RULES[input.kind as UploadKind];
+  if (!rule) {
+    throw new AppError(400, 'VALIDATION_ERROR', `Invalid media kind "${input.kind}".`);
+  }
   if (input.bytes && input.bytes > rule.maxBytes) {
     throw new AppError(
       400,

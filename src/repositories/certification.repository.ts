@@ -1,12 +1,13 @@
-import { asc, isNull } from 'drizzle-orm';
+import { asc } from 'drizzle-orm';
 import type { DbClient } from '@/db/client';
 import { publishedOnly } from '@/db/queries/common';
 import * as schema from '@/db/schema';
+import { fetchContext, type RawContext } from './context.repository';
 import { BaseRepository } from './base.repository';
 
 export interface ICertificationRepository {
   findPublishedCertifications(): Promise<(typeof schema.certifications.$inferSelect)[]>;
-  findActiveMedia(): Promise<(typeof schema.media.$inferSelect)[]>;
+  fetchContext(): Promise<RawContext>;
 }
 
 export class DrizzleCertificationRepository
@@ -25,8 +26,8 @@ export class DrizzleCertificationRepository
       .orderBy(asc(schema.certifications.sortOrder));
   }
 
-  async findActiveMedia(): Promise<(typeof schema.media.$inferSelect)[]> {
-    return this.db.select().from(schema.media).where(isNull(schema.media.deletedAt));
+  fetchContext(): Promise<RawContext> {
+    return fetchContext(this.db);
   }
 }
 

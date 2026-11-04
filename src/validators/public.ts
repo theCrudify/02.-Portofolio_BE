@@ -23,7 +23,8 @@ export const projectsQuerySchema = z.object({
     .optional()
     .openapi({ param: { name: 'technology', in: 'query' }, example: 'nextjs' }),
   type: z
-    .enum(['personal', 'freelance', 'company', 'open_source', 'hackathon'])
+    .string()
+    .regex(/^[a-z0-9_-]+$/)
     .optional()
     .openapi({ param: { name: 'type', in: 'query' } }),
   page: z.coerce
@@ -54,7 +55,8 @@ export const projectSlugParamSchema = z.object({
 export const certificationsQuerySchema = z.object({
   locale: localeParamSchema,
   type: z
-    .enum(['certification', 'course', 'bootcamp', 'training'])
+    .string()
+    .regex(/^[a-z0-9_-]+$/)
     .optional()
     .openapi({ param: { name: 'type', in: 'query' } }),
 });

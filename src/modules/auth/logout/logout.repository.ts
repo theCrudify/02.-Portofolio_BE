@@ -1,3 +1,4 @@
+import { lk } from '@/db/queries/lookups';
 import { eq } from 'drizzle-orm';
 import { BaseRepository } from '@/core/base';
 import * as schema from '@/db/schema';
@@ -13,7 +14,7 @@ export class LogoutRepository extends BaseRepository {
   async createAuditLog(userId: string, summary: string): Promise<void> {
     await this.db.insert(schema.auditLogs).values({
       userId,
-      action: 'logout',
+      actionId: lk('audit_action', 'logout'),
       resource: 'auth',
       resourceId: userId,
       summary,

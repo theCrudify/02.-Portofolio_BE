@@ -1,18 +1,13 @@
-import { eq } from 'drizzle-orm';
+import { lk } from '@/db/queries/lookups';
 import { BaseRepository } from '@/core/base';
 import { auditLogs } from '@/db/schema';
 import type { ResourceConfig } from '@/services/resource-registry';
-import type { ContentStatus } from '@/services/content.service';
+import { findItem, setStatus, type ContentStatus } from '@/services/content-store';
 import type { TransitionActionDto } from './transition.dto';
 
 export class TransitionContentRepository extends BaseRepository {
   async findById(config: ResourceConfig, id: string): Promise<Record<string, unknown> | null> {
-    const rows = (await this.db
-      .select()
-      .from(config.table)
-      .where(eq(config.table.id, id))
-      .limit(1)) as Record<string, unknown>[];
-    return rows[0] ?? null;
+    return findItem(this.db, config, id);
   }
 
   async updateStatus(
@@ -21,17 +16,7 @@ export class TransitionContentRepository extends BaseRepository {
     nextStatus: ContentStatus,
     publishedAt: unknown,
   ): Promise<Record<string, unknown>> {
-    const now = new Date();
-    const updatedRows = (await this.db
-      .update(config.table)
-      .set({
-        status: nextStatus,
-        publishedAt,
-        updatedAt: now,
-      })
-      .where(eq(config.table.id, id))
-      .returning()) as Record<string, unknown>[];
-    return updatedRows[0]!;
+    return setStatus(this.db, config, id, nextStatus, publishedAt);
   }
 
   async writeAudit(
@@ -43,7 +28,7 @@ export class TransitionContentRepository extends BaseRepository {
   ): Promise<void> {
     await this.db.insert(auditLogs).values({
       userId,
-      action,
+      actionId: lk('audit_action', action),
       resource: resource.slice(0, 40),
       resourceId,
       summary,

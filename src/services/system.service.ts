@@ -1,36 +1,55 @@
 import { desc } from 'drizzle-orm';
 import type { Database } from '../db/client';
 import { paginate, type PaginateInput } from '../db/queries/common';
-import {
-  profile,
-  siteSettings,
-  media,
-  technologies,
-  projects,
-  projectTechnologies,
-  projectLinks,
-  projectMedia,
-  experiences,
-  experienceTechnologies,
-  education,
-  certifications,
-  activities,
-  achievements,
-  publications,
-  testimonials,
-  documents,
-  exportPresets,
-  auditLogs,
-} from '../db/schema';
+import * as schema from '../db/schema';
 
-const BACKUP_TABLES = { profile, siteSettings, media, technologies, projects, projectTechnologies, projectLinks, projectMedia, experiences, experienceTechnologies, education, certifications, activities, achievements, publications, testimonials, documents, exportPresets };
+const { auditLogs, projects, technologies } = schema;
+
+/** Portfolio content in FK-safe order (master data first). Users, logs and analytics are excluded. */
+export const BACKUP_TABLES = {
+  lookupGroups: schema.lookupGroups,
+  lookups: schema.lookups,
+  media: schema.media,
+  organizations: schema.organizations,
+  profile: schema.profile,
+  profileSocials: schema.profileSocials,
+  profileLanguages: schema.profileLanguages,
+  profileInterests: schema.profileInterests,
+  siteSettings: schema.siteSettings,
+  siteSections: schema.siteSections,
+  technologies: schema.technologies,
+  projects: schema.projects,
+  projectResponsibilities: schema.projectResponsibilities,
+  projectHighlights: schema.projectHighlights,
+  projectMetrics: schema.projectMetrics,
+  projectTechnologies: schema.projectTechnologies,
+  projectLinks: schema.projectLinks,
+  projectMedia: schema.projectMedia,
+  experiences: schema.experiences,
+  experienceResponsibilities: schema.experienceResponsibilities,
+  experienceAchievements: schema.experienceAchievements,
+  experienceProjects: schema.experienceProjects,
+  experienceTechnologies: schema.experienceTechnologies,
+  education: schema.education,
+  educationActivities: schema.educationActivities,
+  certifications: schema.certifications,
+  activities: schema.activities,
+  activityAchievements: schema.activityAchievements,
+  achievements: schema.achievements,
+  publications: schema.publications,
+  testimonials: schema.testimonials,
+  documents: schema.documents,
+  exportPresets: schema.exportPresets,
+  exportPresetSections: schema.exportPresetSections,
+  exportPresetTechnologies: schema.exportPresetTechnologies,
+};
 type BackupTableName = keyof typeof BACKUP_TABLES;
 
 export async function exportBackup(db: Database) {
   const names = Object.keys(BACKUP_TABLES) as BackupTableName[];
   const rows = await Promise.all(names.map((n) => db.select().from(BACKUP_TABLES[n])));
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     tables: Object.fromEntries(names.map((n, i) => [n, rows[i]])) as Record<BackupTableName, unknown[]>,
   };

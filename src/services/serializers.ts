@@ -1,12 +1,15 @@
 import type { SupportedLocale } from '@/lib/locale';
 import { pickLocale } from '@/lib/locale';
 import type * as schema from '@/db/schema';
+import type { LookupIndex, PublicLookup } from '@/db/queries/lookups';
 
 export type MediaRow = typeof schema.media.$inferSelect;
+export type OrganizationRow = typeof schema.organizations.$inferSelect;
 export type ProjectRow = typeof schema.projects.$inferSelect;
 export type TechnologyRow = typeof schema.technologies.$inferSelect;
 export type ProjectLinkRow = typeof schema.projectLinks.$inferSelect;
 export type ProjectMediaRow = typeof schema.projectMedia.$inferSelect;
+export type ProjectMetricRow = typeof schema.projectMetrics.$inferSelect;
 export type ExperienceRow = typeof schema.experiences.$inferSelect;
 export type EducationRow = typeof schema.education.$inferSelect;
 export type CertificationRow = typeof schema.certifications.$inferSelect;
@@ -15,7 +18,35 @@ export type AchievementRow = typeof schema.achievements.$inferSelect;
 export type PublicationRow = typeof schema.publications.$inferSelect;
 export type TestimonialRow = typeof schema.testimonials.$inferSelect;
 export type ProfileRow = typeof schema.profile.$inferSelect;
+export type ProfileSocialRow = typeof schema.profileSocials.$inferSelect;
+export type ProfileLanguageRow = typeof schema.profileLanguages.$inferSelect;
+export type ProfileInterestRow = typeof schema.profileInterests.$inferSelect;
 export type SiteSettingsRow = typeof schema.siteSettings.$inferSelect;
+export type SiteSectionRow = typeof schema.siteSections.$inferSelect;
+
+/** Bilingual bullet row (responsibilities, highlights, achievements, activities). */
+export interface BulletRow {
+  textEn: string;
+  textId: string | null;
+  sortOrder: number;
+}
+
+/** Everything a serializer needs besides the row itself. */
+export interface SerializeContext {
+  locale: SupportedLocale;
+  lookups: LookupIndex;
+  media: Map<string, MediaRow>;
+  organizations: Map<string, OrganizationRow>;
+}
+
+export function lookupOf(ctx: SerializeContext, id: string | null | undefined): PublicLookup | null {
+  return ctx.lookups.toPublic(id, ctx.locale);
+}
+
+/** For NOT NULL lookup columns: an id that no longer resolves still yields a usable value. */
+function requiredLookup(ctx: SerializeContext, id: string): PublicLookup {
+  return lookupOf(ctx, id) ?? { code: 'unknown', label: '', icon: null, color: null };
+}
 
 export interface PublicMedia {
   id: string;
@@ -23,8 +54,8 @@ export interface PublicMedia {
   width: number | null;
   height: number | null;
   alt: string;
-  provider: 'cloudinary' | 'youtube' | 'vimeo' | 'loom';
-  kind: 'image' | 'pdf' | 'video';
+  provider: string;
+  kind: string;
   embedId: string | null;
   thumbnailUrl: string | null;
   title: string | null;
@@ -32,7 +63,7 @@ export interface PublicMedia {
   sources?: { mp4: string; webm: string };
 }
 
-export function optimizeCloudinaryUrl(url: string, kind: 'image' | 'pdf' | 'video'): string {
+export function optimizeCloudinaryUrl(url: string, kind: string): string {
   if (!url.includes('res.cloudinary.com') || url.includes('/f_auto,q_auto/')) {
     return url;
   }
@@ -42,17 +73,14 @@ export function optimizeCloudinaryUrl(url: string, kind: 'image' | 'pdf' | 'vide
   return url;
 }
 
-export function toMedia(
-  row: MediaRow | null | undefined,
-  locale: SupportedLocale,
-): PublicMedia | null {
+export function toMedia(row: MediaRow | null | undefined, ctx: SerializeContext): PublicMedia | null {
   if (!row || row.deletedAt) {
     return null;
   }
-  const alt = pickLocale(row, 'alt', locale) ?? pickLocale(row, 'title', locale) ?? '';
-  const title = pickLocale(row, 'title', locale);
-  const url =
-    row.provider === 'cloudinary' ? optimizeCloudinaryUrl(row.url, row.kind) : row.url;
+  const provider = ctx.lookups.code(row.providerId) ?? 'unknown';
+  const kind = ctx.lookups.code(row.kindId) ?? 'unknown';
+  const alt = pickLocale(row, 'alt', ctx.locale) ?? pickLocale(row, 'title', ctx.locale) ?? '';
+  const url = provider === 'cloudinary' ? optimizeCloudinaryUrl(row.url, kind) : row.url;
 
   const result: PublicMedia = {
     id: row.id,
@@ -60,54 +88,76 @@ export function toMedia(
     width: row.width ?? null,
     height: row.height ?? null,
     alt,
-    provider: row.provider,
-    kind: row.kind,
+    provider,
+    kind,
     embedId: row.embedId ?? null,
     thumbnailUrl: row.thumbnailUrl ?? null,
-    title,
+    title: pickLocale(row, 'title', ctx.locale),
     captionsUrl: row.captionsUrl ?? null,
   };
 
-  if (row.provider === 'cloudinary' && row.kind === 'video') {
+  if (provider === 'cloudinary' && kind === 'video') {
     const baseWithoutExt = row.url.replace(/\.[a-zA-Z0-9]+$/, '');
-    result.sources = {
-      mp4: `${baseWithoutExt}.mp4`,
-      webm: `${baseWithoutExt}.webm`,
-    };
+    result.sources = { mp4: `${baseWithoutExt}.mp4`, webm: `${baseWithoutExt}.webm` };
   }
-
   return result;
 }
 
-export function toBullets(
-  items: { text_en: string; text_id?: string }[] | null | undefined,
-  locale: SupportedLocale,
-): string[] {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-  return items.map((item) => {
-    if (locale === 'id' && item.text_id && item.text_id.trim().length > 0) {
-      return item.text_id;
-    }
-    return item.text_en;
-  });
+export interface PublicImage {
+  url: string;
+  width: number | null;
+  height: number | null;
+  alt: string;
 }
 
-export function toMetrics(
-  items: { label_en: string; label_id?: string; value: string }[] | null | undefined,
-  locale: SupportedLocale,
-): { label: string; value: string }[] {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-  return items.map((item) => ({
-    label:
-      locale === 'id' && item.label_id && item.label_id.trim().length > 0
-        ? item.label_id
-        : item.label_en,
-    value: item.value,
-  }));
+function imageOf(
+  ctx: SerializeContext,
+  mediaId: string | null | undefined,
+  fallbackAlt = '',
+): PublicImage | null {
+  const m = mediaId ? toMedia(ctx.media.get(mediaId), ctx) : null;
+  return m ? { url: m.url, width: m.width, height: m.height, alt: m.alt || fallbackAlt } : null;
+}
+
+export function toBullets(rows: BulletRow[], locale: SupportedLocale): string[] {
+  return [...rows]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((r) => (locale === 'id' && r.textId?.trim() ? r.textId : r.textEn));
+}
+
+export function toMetrics(rows: ProjectMetricRow[], locale: SupportedLocale) {
+  return [...rows]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((r) => ({
+      label: locale === 'id' && r.labelId?.trim() ? r.labelId : r.labelEn,
+      value: r.value,
+    }));
+}
+
+export interface PublicOrganization {
+  slug: string;
+  name: string;
+  type: PublicLookup | null;
+  logo: PublicImage | null;
+  websiteUrl: string | null;
+  location: string | null;
+}
+
+export function toOrganization(
+  ctx: SerializeContext,
+  id: string | null | undefined,
+): PublicOrganization | null {
+  const row = id ? ctx.organizations.get(id) : undefined;
+  if (!row || row.deletedAt) return null;
+  return {
+    slug: row.slug,
+    name: row.name,
+    type: lookupOf(ctx, row.typeId),
+    // Confidential organisations keep their (generic) name but expose nothing identifying.
+    logo: row.isConfidential ? null : imageOf(ctx, row.logoMediaId, row.name),
+    websiteUrl: row.isConfidential ? null : (row.websiteUrl ?? null),
+    location: row.location ?? null,
+  };
 }
 
 export interface PublicTechChip {
@@ -117,37 +167,61 @@ export interface PublicTechChip {
 }
 
 export function toTechChip(row: TechnologyRow): PublicTechChip {
-  return {
-    name: row.name,
-    slug: row.slug,
-    icon: row.icon ?? null,
-  };
+  return { name: row.name, slug: row.slug, icon: row.icon ?? null };
+}
+
+export interface TechGroup {
+  group: PublicLookup;
+  items: PublicTechChip[];
+}
+
+/** Groups technologies by a lookup id, ordered like the lookup group. */
+export function groupTechnologies(
+  ctx: SerializeContext,
+  items: { tech: TechnologyRow; groupId: string; sortOrder: number }[],
+): TechGroup[] {
+  const buckets = new Map<string, PublicTechChip[]>();
+  for (const item of [...items].sort((a, b) => a.sortOrder - b.sortOrder)) {
+    const list = buckets.get(item.groupId) ?? [];
+    list.push(toTechChip(item.tech));
+    buckets.set(item.groupId, list);
+  }
+  return [...buckets.entries()]
+    .map(([groupId, chips]) => ({ row: ctx.lookups.get(groupId), groupId, chips }))
+    .sort((a, b) => (a.row?.sortOrder ?? 0) - (b.row?.sortOrder ?? 0))
+    .map(({ groupId, chips }) => ({ group: requiredLookup(ctx, groupId), items: chips }));
 }
 
 export interface PublicProjectLink {
-  type: ProjectLinkRow['type'];
+  type: PublicLookup;
   label: string;
   url: string | null;
   isPrivate: boolean;
 }
 
-export function toProjectLink(row: ProjectLinkRow): PublicProjectLink {
+export function toProjectLink(row: ProjectLinkRow, ctx: SerializeContext): PublicProjectLink {
   return {
-    type: row.type,
+    type: requiredLookup(ctx, row.typeId),
     label: row.label,
     url: row.isPrivate ? null : (row.url ?? null),
     isPrivate: row.isPrivate,
   };
 }
 
+export interface PublicProjectRef {
+  slug: string;
+  title: string;
+}
+
 export interface PublicProjectCard {
   slug: string;
   title: string;
   summary: string;
-  type: ProjectRow['type'];
-  projectState: ProjectRow['projectState'];
+  type: PublicLookup;
+  state: PublicLookup;
   featured: boolean;
-  cover: { url: string; width: number | null; height: number | null; alt: string } | null;
+  client: PublicOrganization | null;
+  cover: PublicImage | null;
   clip: PublicMedia | null;
   technologies: PublicTechChip[];
   primaryLink: PublicProjectLink | null;
@@ -157,165 +231,116 @@ export interface PublicProjectCard {
 
 export function toProjectCard(
   row: ProjectRow,
-  coverMedia: MediaRow | null | undefined,
+  ctx: SerializeContext,
   technologies: TechnologyRow[],
   links: ProjectLinkRow[],
-  clipMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
+  clipMediaId: string | null,
 ): PublicProjectCard {
-  const coverObj = toMedia(coverMedia, locale);
-  const clipObj = toMedia(clipMedia, locale);
   const sortedLinks = [...links].sort((a, b) => a.sortOrder - b.sortOrder);
   const primaryLinkRow = sortedLinks.find((l) => !l.isPrivate && l.url) ?? sortedLinks[0] ?? null;
+  const title = pickLocale(row, 'title', ctx.locale) ?? row.titleEn;
 
   return {
     slug: row.slug,
-    title: pickLocale(row, 'title', locale) ?? row.titleEn,
-    summary: pickLocale(row, 'summary', locale) ?? row.summaryEn,
-    type: row.type,
-    projectState: row.projectState,
+    title,
+    summary: pickLocale(row, 'summary', ctx.locale) ?? row.summaryEn,
+    type: requiredLookup(ctx, row.typeId),
+    state: requiredLookup(ctx, row.stateId),
     featured: row.featured,
-    cover: coverObj
-      ? {
-          url: coverObj.url,
-          width: coverObj.width,
-          height: coverObj.height,
-          alt: coverObj.alt,
-        }
-      : null,
-    clip: clipObj,
+    client: toOrganization(ctx, row.clientOrganizationId),
+    cover: imageOf(ctx, row.coverMediaId, title),
+    clip: clipMediaId ? toMedia(ctx.media.get(clipMediaId), ctx) : null,
     technologies: technologies.slice(0, 4).map(toTechChip),
-    primaryLink: primaryLinkRow ? toProjectLink(primaryLinkRow) : null,
+    primaryLink: primaryLinkRow ? toProjectLink(primaryLinkRow, ctx) : null,
     periodStart: row.periodStart ?? null,
     periodEnd: row.periodEnd ?? null,
   };
 }
 
-export interface GroupedTechnologies {
-  frontend: PublicTechChip[];
-  backend: PublicTechChip[];
-  database: PublicTechChip[];
-  devops: PublicTechChip[];
-  other: PublicTechChip[];
+export interface PublicProjectMediaItem extends PublicMedia {
+  role: PublicLookup;
+  caption: string | null;
 }
 
-export interface PublicProjectMediaItem {
+/** A position the project belongs to (project ↔ experience is many-to-many). */
+export interface PublicPositionRef {
   id: string;
-  role: ProjectMediaRow['role'];
-  provider: MediaRow['provider'];
-  kind: MediaRow['kind'];
-  url: string;
-  embedId: string | null;
-  thumbnailUrl: string | null;
-  width: number | null;
-  height: number | null;
-  alt: string;
-  title: string | null;
-  caption: string | null;
-  sources?: { mp4: string; webm: string };
+  role: string;
+  organization: PublicOrganization | null;
+  startDate: string;
+  endDate: string | null;
+}
+
+export function toPositionRef(row: ExperienceRow, ctx: SerializeContext): PublicPositionRef {
+  return {
+    id: row.id,
+    role: pickLocale(row, 'role', ctx.locale) ?? row.roleEn,
+    organization: toOrganization(ctx, row.organizationId),
+    startDate: row.startDate,
+    endDate: row.endDate ?? null,
+  };
 }
 
 export function toProjectDetail(
   row: ProjectRow,
+  ctx: SerializeContext,
   options: {
-    coverMedia?: MediaRow | null;
-    architectureMedia?: MediaRow | null;
-    techWithGroup: { tech: TechnologyRow; group: keyof GroupedTechnologies; sortOrder: number }[];
+    technologies: { tech: TechnologyRow; groupId: string; sortOrder: number }[];
     links: ProjectLinkRow[];
-    mediaItems: { relation: ProjectMediaRow; media: MediaRow }[];
-    prev: { slug: string; title: string } | null;
-    next: { slug: string; title: string } | null;
-    locale: SupportedLocale;
+    mediaItems: ProjectMediaRow[];
+    metrics: ProjectMetricRow[];
+    highlights: BulletRow[];
+    responsibilities: BulletRow[];
+    positions: ExperienceRow[];
+    prev: PublicProjectRef | null;
+    next: PublicProjectRef | null;
   },
 ) {
-  const { locale } = options;
+  const { locale } = ctx;
   const title = pickLocale(row, 'title', locale) ?? row.titleEn;
   const summary = pickLocale(row, 'summary', locale) ?? row.summaryEn;
-  const coverObj = toMedia(options.coverMedia, locale);
-  const archObj = toMedia(options.architectureMedia, locale);
 
-  const grouped: GroupedTechnologies = {
-    frontend: [],
-    backend: [],
-    database: [],
-    devops: [],
-    other: [],
-  };
-
-  const sortedTech = [...options.techWithGroup].sort((a, b) => a.sortOrder - b.sortOrder);
-  for (const item of sortedTech) {
-    const groupKey = item.group in grouped ? item.group : 'other';
-    grouped[groupKey].push(toTechChip(item.tech));
-  }
-
-  const sortedLinks = [...options.links]
+  const media: PublicProjectMediaItem[] = [...options.mediaItems]
     .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map(toProjectLink);
-
-  const sortedMedia: PublicProjectMediaItem[] = [...options.mediaItems]
-    .filter((m) => !m.media.deletedAt)
-    .sort((a, b) => a.relation.sortOrder - b.relation.sortOrder)
-    .map(({ relation, media }) => {
-      const m = toMedia(media, locale)!;
-      return {
-        id: m.id,
-        role: relation.role,
-        provider: m.provider,
-        kind: m.kind,
-        url: m.url,
-        embedId: m.embedId,
-        thumbnailUrl: m.thumbnailUrl,
-        width: m.width,
-        height: m.height,
-        alt: m.alt,
-        title: m.title,
-        caption: pickLocale(relation, 'caption', locale),
-        ...(m.sources ? { sources: m.sources } : {}),
-      };
+    .flatMap((relation) => {
+      const m = toMedia(ctx.media.get(relation.mediaId), ctx);
+      if (!m) return [];
+      return [
+        { ...m, role: requiredLookup(ctx, relation.roleId), caption: pickLocale(relation, 'caption', locale) },
+      ];
     });
 
   return {
     slug: row.slug,
     title,
     summary,
-    type: row.type,
-    projectState: row.projectState,
-    role: row.role ?? null,
+    type: requiredLookup(ctx, row.typeId),
+    state: requiredLookup(ctx, row.stateId),
+    role: pickLocale(row, 'role', locale),
     teamSize: row.teamSize ?? null,
-    client: row.client ?? null,
+    client: toOrganization(ctx, row.clientOrganizationId),
+    positions: [...options.positions]
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+      .map((p) => toPositionRef(p, ctx)),
     periodStart: row.periodStart ?? null,
     periodEnd: row.periodEnd ?? null,
     problem: pickLocale(row, 'problem', locale),
     solution: pickLocale(row, 'solution', locale),
     result: pickLocale(row, 'result', locale),
     challenges: pickLocale(row, 'challenges', locale),
-    metrics: toMetrics(row.metrics, locale),
-    highlights: toBullets(row.highlights, locale),
-    technologies: grouped,
-    links: sortedLinks,
-    cover: coverObj
-      ? {
-          url: coverObj.url,
-          width: coverObj.width,
-          height: coverObj.height,
-          alt: coverObj.alt,
-        }
-      : null,
-    architecture: archObj
-      ? {
-          url: archObj.url,
-          width: archObj.width,
-          height: archObj.height,
-          alt: archObj.alt,
-        }
-      : null,
-    media: sortedMedia,
+    responsibilities: toBullets(options.responsibilities, locale),
+    metrics: toMetrics(options.metrics, locale),
+    highlights: toBullets(options.highlights, locale),
+    technologies: groupTechnologies(ctx, options.technologies),
+    links: [...options.links].sort((a, b) => a.sortOrder - b.sortOrder).map((l) => toProjectLink(l, ctx)),
+    cover: imageOf(ctx, row.coverMediaId, title),
+    architecture: imageOf(ctx, row.architectureMediaId, title),
+    media,
     seo: {
       title: pickLocale(row, 'metaTitle', locale) ?? title,
       description: pickLocale(row, 'metaDescription', locale) ?? summary,
     },
-    updatedAt:
-      row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
     prev: options.prev,
     next: options.next,
   };
@@ -323,239 +348,193 @@ export function toProjectDetail(
 
 export function toExperience(
   row: ExperienceRow,
-  technologies: TechnologyRow[],
-  companyLogo: MediaRow | null | undefined,
-  locale: SupportedLocale,
+  ctx: SerializeContext,
+  related: {
+    technologies: TechnologyRow[];
+    responsibilities: BulletRow[];
+    achievements: BulletRow[];
+    projects: PublicProjectRef[];
+  },
 ) {
-  const logo = toMedia(companyLogo, locale);
   return {
     id: row.id,
-    company: row.company,
-    companyLogo: logo ? { url: logo.url, alt: logo.alt || row.company } : null,
-    companyUrl: row.companyUrl ?? null,
-    role: pickLocale(row, 'role', locale) ?? row.roleEn,
-    employmentType: row.employmentType,
+    organization: toOrganization(ctx, row.organizationId),
+    role: pickLocale(row, 'role', ctx.locale) ?? row.roleEn,
+    employmentType: requiredLookup(ctx, row.employmentTypeId),
     location: row.location ?? null,
-    workMode: row.workMode ?? null,
+    workMode: lookupOf(ctx, row.workModeId),
     startDate: row.startDate,
     endDate: row.endDate ?? null,
-    description: pickLocale(row, 'description', locale),
-    achievements: toBullets(row.achievements, locale),
-    technologies: technologies.map(toTechChip),
+    description: pickLocale(row, 'description', ctx.locale),
+    responsibilities: toBullets(related.responsibilities, ctx.locale),
+    achievements: toBullets(related.achievements, ctx.locale),
+    technologies: related.technologies.map(toTechChip),
+    projects: related.projects,
   };
 }
 
-export function toEducation(
-  row: EducationRow,
-  logoMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
-) {
-  const logo = toMedia(logoMedia, locale);
+export function toEducation(row: EducationRow, ctx: SerializeContext, activities: BulletRow[]) {
   return {
     id: row.id,
-    institution: row.institution,
-    logo: logo ? { url: logo.url, alt: logo.alt || row.institution } : null,
+    organization: toOrganization(ctx, row.organizationId),
     degree: row.degree ?? null,
-    field: pickLocale(row, 'field', locale),
+    field: pickLocale(row, 'field', ctx.locale),
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
     gpa: row.gpa ?? null,
     gpaScale: row.gpaScale ?? null,
-    description: pickLocale(row, 'description', locale),
-    activities: toBullets(row.activities, locale),
+    description: pickLocale(row, 'description', ctx.locale),
+    activities: toBullets(activities, ctx.locale),
   };
 }
 
 export function toCertification(
   row: CertificationRow,
-  issuerMedia: MediaRow | null | undefined,
-  imageMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
+  ctx: SerializeContext,
   nowDate: Date = new Date(),
 ) {
-  const issuerLogo = toMedia(issuerMedia, locale);
-  const image = toMedia(imageMedia, locale);
   const todayIso = nowDate.toISOString().slice(0, 10);
-  const isExpired = Boolean(row.expiryDate && row.expiryDate < todayIso);
-
   return {
     id: row.id,
-    type: row.type,
+    type: requiredLookup(ctx, row.typeId),
     name: row.name,
-    issuer: row.issuer,
-    issuerLogo: issuerLogo ? { url: issuerLogo.url, alt: issuerLogo.alt || row.issuer } : null,
+    issuer: toOrganization(ctx, row.issuerOrganizationId),
     issueDate: row.issueDate ?? null,
     expiryDate: row.expiryDate ?? null,
-    isExpired,
+    isExpired: Boolean(row.expiryDate && row.expiryDate < todayIso),
     credentialId: row.credentialId ?? null,
     credentialUrl: row.credentialUrl ?? null,
-    image: image
-      ? { url: image.url, width: image.width, height: image.height, alt: image.alt || row.name }
-      : null,
+    image: imageOf(ctx, row.imageMediaId, row.name),
     featured: row.featured,
   };
 }
 
-export function toActivity(
-  row: ActivityRow,
-  mediaItem: MediaRow | null | undefined,
-  locale: SupportedLocale,
-) {
-  const mediaObj = toMedia(mediaItem, locale);
+export function toActivity(row: ActivityRow, ctx: SerializeContext, achievements: BulletRow[]) {
   return {
     id: row.id,
-    type: row.type,
-    organization: row.organization,
+    type: requiredLookup(ctx, row.typeId),
+    organization: toOrganization(ctx, row.organizationId),
     eventName: row.eventName ?? null,
-    role: pickLocale(row, 'role', locale) ?? row.roleEn,
+    role: pickLocale(row, 'role', ctx.locale) ?? row.roleEn,
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
-    description: pickLocale(row, 'description', locale),
-    achievements: toBullets(row.achievements, locale),
-    media: mediaObj
-      ? { url: mediaObj.url, width: mediaObj.width, height: mediaObj.height, alt: mediaObj.alt }
-      : null,
+    description: pickLocale(row, 'description', ctx.locale),
+    achievements: toBullets(achievements, ctx.locale),
+    media: imageOf(ctx, row.mediaId),
     linkUrl: row.linkUrl ?? null,
   };
 }
 
-export function toAchievement(
-  row: AchievementRow,
-  certMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
-) {
-  const certObj = toMedia(certMedia, locale);
+export function toAchievement(row: AchievementRow, ctx: SerializeContext) {
   return {
     id: row.id,
-    title: pickLocale(row, 'title', locale) ?? row.titleEn,
-    issuer: row.issuer ?? null,
+    title: pickLocale(row, 'title', ctx.locale) ?? row.titleEn,
+    issuer: toOrganization(ctx, row.issuerOrganizationId),
     eventName: row.eventName ?? null,
     rank: row.rank ?? null,
     date: row.date ?? null,
-    description: pickLocale(row, 'description', locale),
-    certificate: certObj
-      ? { url: certObj.url, width: certObj.width, height: certObj.height, alt: certObj.alt }
-      : null,
+    description: pickLocale(row, 'description', ctx.locale),
+    certificate: imageOf(ctx, row.certificateMediaId),
     linkUrl: row.linkUrl ?? null,
   };
 }
 
-export function toPublication(
-  row: PublicationRow,
-  videoMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
-) {
-  const videoObj = toMedia(videoMedia, locale);
+export function toPublication(row: PublicationRow, ctx: SerializeContext) {
   return {
     id: row.id,
-    type: row.type,
+    type: requiredLookup(ctx, row.typeId),
     title: row.title,
     venue: row.venue ?? null,
     date: row.date ?? null,
-    summary: pickLocale(row, 'summary', locale),
+    summary: pickLocale(row, 'summary', ctx.locale),
     url: row.url ?? null,
-    video: videoObj,
+    video: row.videoMediaId ? toMedia(ctx.media.get(row.videoMediaId), ctx) : null,
   };
 }
 
-export function toTestimonial(
-  row: TestimonialRow,
-  avatarMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
-) {
-  const avatarObj = toMedia(avatarMedia, locale);
+export function toTestimonial(row: TestimonialRow, ctx: SerializeContext) {
   return {
     id: row.id,
     name: row.name,
     position: row.position ?? null,
-    company: row.company ?? null,
-    avatar: avatarObj ? { url: avatarObj.url, alt: avatarObj.alt || row.name } : null,
+    organization: toOrganization(ctx, row.organizationId),
+    avatar: imageOf(ctx, row.avatarMediaId, row.name),
     relationship: row.relationship ?? null,
-    quote: pickLocale(row, 'quote', locale) ?? row.quoteEn,
+    quote: pickLocale(row, 'quote', ctx.locale) ?? row.quoteEn,
     linkedinUrl: row.linkedinUrl ?? null,
   };
 }
 
 export function toPublicProfile(
   row: ProfileRow | null | undefined,
-  avatarMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
+  ctx: SerializeContext,
+  related: {
+    socials: ProfileSocialRow[];
+    languages: ProfileLanguageRow[];
+    interests: ProfileInterestRow[];
+  },
 ) {
   if (!row) {
     return null;
   }
-  const avatarObj = toMedia(avatarMedia, locale);
-  const interests = Array.isArray(row.interests)
-    ? row.interests.map((item) => ({
-        label:
-          locale === 'id' && item.label_id && item.label_id.trim().length > 0
-            ? item.label_id
-            : item.label_en,
-        icon: item.icon ?? null,
-      }))
-    : [];
+  const bySort = <T extends { sortOrder: number }>(rows: T[]) =>
+    [...rows].sort((a, b) => a.sortOrder - b.sortOrder);
 
   return {
     name: row.name,
-    headline: pickLocale(row, 'headline', locale) ?? row.headlineEn,
-    bio: pickLocale(row, 'bio', locale) ?? row.bioEn,
-    avatar: avatarObj
-      ? {
-          url: avatarObj.url,
-          width: avatarObj.width,
-          height: avatarObj.height,
-          alt: avatarObj.alt || row.name,
-        }
-      : null,
+    headline: pickLocale(row, 'headline', ctx.locale) ?? row.headlineEn,
+    bio: pickLocale(row, 'bio', ctx.locale) ?? row.bioEn,
+    avatar: imageOf(ctx, row.avatarMediaId, row.name),
     location: row.location ?? null,
     timezone: row.timezone,
     email: row.email ?? null,
-    socials: row.socials ?? {},
-    availability: row.availability,
-    workPreference: row.workPreference,
-    languages: row.languages ?? [],
-    interests,
-    referencesNote: pickLocale(row, 'referencesNote', locale),
+    socials: bySort(related.socials).map((s) => ({
+      platform: requiredLookup(ctx, s.platformId),
+      url: s.url,
+      handle: s.handle ?? null,
+    })),
+    availability: requiredLookup(ctx, row.availabilityId),
+    workPreference: requiredLookup(ctx, row.workPreferenceId),
+    languages: bySort(related.languages).map((l) => ({
+      name: pickLocale(l, 'name', ctx.locale) ?? l.nameEn,
+      level: requiredLookup(ctx, l.levelId),
+    })),
+    interests: bySort(related.interests).map((i) => ({
+      label: pickLocale(i, 'label', ctx.locale) ?? i.labelEn,
+      icon: i.icon ?? null,
+    })),
+    referencesNote: pickLocale(row, 'referencesNote', ctx.locale),
     careerStartDate: row.careerStartDate ?? null,
-    updatedAt:
-      row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
   };
+}
+
+export interface PublicSiteSection {
+  code: string;
+  label: string;
+  visible: boolean;
 }
 
 export function toPublicSettings(
   row: SiteSettingsRow | null | undefined,
-  ogMedia: MediaRow | null | undefined,
-  locale: SupportedLocale,
+  ctx: SerializeContext,
+  sections: SiteSectionRow[],
 ) {
-  const ogObj = toMedia(ogMedia, locale);
   return {
-    themePreset: row?.themePreset ?? 'slate',
-    colorMode: row?.colorMode ?? 'system',
-    fontPair: row?.fontPair ?? 'geist',
-    sectionOrder: row?.sectionOrder ?? [
-      'hero',
-      'about',
-      'projects',
-      'skills',
-      'experience',
-      'education',
-      'certifications',
-      'activities',
-      'achievements',
-      'publications',
-      'testimonials',
-      'github',
-      'contact',
-    ],
-    hiddenSections: row?.hiddenSections ?? [],
-    heroCvButtons: row?.heroCvButtons ?? 'both',
+    themePreset: ctx.lookups.code(row?.themePresetId) ?? 'slate',
+    colorMode: ctx.lookups.code(row?.colorModeId) ?? 'system',
+    fontPair: ctx.lookups.code(row?.fontPairId) ?? 'geist',
+    heroCvButtons: ctx.lookups.code(row?.heroCvButtonsId) ?? 'both',
+    sections: [...sections]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .flatMap((s): PublicSiteSection[] => {
+        const l = lookupOf(ctx, s.sectionId);
+        return l ? [{ code: l.code, label: l.label, visible: s.isVisible }] : [];
+      }),
     seo: {
-      title: row ? pickLocale(row, 'seoTitle', locale) : null,
-      description: row ? pickLocale(row, 'seoDescription', locale) : null,
-      ogImage: ogObj
-        ? { url: ogObj.url, width: ogObj.width, height: ogObj.height, alt: ogObj.alt }
-        : null,
+      title: row ? pickLocale(row, 'seoTitle', ctx.locale) : null,
+      description: row ? pickLocale(row, 'seoDescription', ctx.locale) : null,
+      ogImage: imageOf(ctx, row?.ogMediaId),
     },
   };
 }
-

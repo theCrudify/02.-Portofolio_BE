@@ -1,3 +1,4 @@
+import { assertPresetCodes } from '@/services/document.service';
 import type { DbClient } from '@/db/client';
 import { BaseService } from '@/core/base';
 import { AppError } from '@/lib/errors';
@@ -33,9 +34,10 @@ export class UpdateDocumentsService extends BaseService {
   }
 
   async updatePreset(id: string, dto: UpdateExportPresetBodyDto, userId: string) {
+    await assertPresetCodes(this.repo.db, dto);
     const updated = await this.repo.updatePreset(id, {
       ...dto,
-      itemFilter: dto.itemFilter ?? {},
+      sinceYears: dto.sinceYears ?? null,
     });
     if (!updated) {
       throw new AppError(404, 'NOT_FOUND', 'Export preset not found');

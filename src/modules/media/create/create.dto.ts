@@ -1,7 +1,7 @@
 import { z } from '@hono/zod-openapi';
 
 export const createMediaBodySchema = z.object({
-  kind: z.enum(['image', 'video', 'document', 'pdf']),
+  kind: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/),
   publicId: z.string().min(1).max(255),
   url: z
     .string()

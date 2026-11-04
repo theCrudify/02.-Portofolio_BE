@@ -2,7 +2,7 @@ import { z } from '@hono/zod-openapi';
 import { booleanQueryParam, createModuleQuerySchema } from '@/core/query';
 
 export const listUsersQueryDto = createModuleQuerySchema({
-  role: z.enum(['owner', 'editor', 'viewer']).optional(),
+  role: z.string().min(1).max(60).regex(/^[a-z0-9_-]+$/).optional(),
   isActive: booleanQueryParam.optional(),
   totpEnabled: booleanQueryParam.optional(),
 });

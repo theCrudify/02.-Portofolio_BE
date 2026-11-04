@@ -1,11 +1,11 @@
+import { selectUsers, type UserWithRole } from '@/db/queries/users';
 import { BaseRepository } from '@/core/base';
 import { SqlQueryBuilder } from '@/core/query';
-import * as schema from '@/db/schema';
 import type { ListUsersQueryDto } from './list.dto';
 
 export class ListUsersRepository extends BaseRepository {
   async findUsers(query: Partial<ListUsersQueryDto> = {}) {
-    const allRows = await this.db.select().from(schema.users);
+    const allRows = await selectUsers(this.db);
     const refined = SqlQueryBuilder.applyMemoryRefinement(
       allRows as unknown as Record<string, unknown>[],
       {
@@ -23,7 +23,7 @@ export class ListUsersRepository extends BaseRepository {
         },
       },
       ['name', 'email', 'role'],
-    ) as unknown as (typeof schema.users.$inferSelect)[];
+    ) as unknown as UserWithRole[];
 
     const total = refined.length;
     if (query.all || (!query.page && !query.limit)) {

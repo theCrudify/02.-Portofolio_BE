@@ -1,3 +1,5 @@
+import { assertLookupCodes } from '@/db/queries/lookups';
+import { assertPresetCodes } from '@/services/document.service';
 import type { DbClient } from '@/db/client';
 import { BaseService } from '@/core/base';
 import type {
@@ -16,6 +18,10 @@ export class CreateDocumentsService extends BaseService {
   }
 
   async executeDocument(dto: CreateDocumentBodyDto, userId: string) {
+    await assertLookupCodes(this.repo.db, {
+      type: ['document_type', dto.type],
+      locale: ['locale', dto.locale],
+    });
     const created = await this.repo.insertDocument(dto);
     await this.repo.logAudit({
       userId,
@@ -28,9 +34,10 @@ export class CreateDocumentsService extends BaseService {
   }
 
   async executePreset(dto: CreateExportPresetBodyDto, userId: string) {
+    await assertPresetCodes(this.repo.db, dto);
     const created = await this.repo.insertPreset({
       ...dto,
-      itemFilter: dto.itemFilter ?? {},
+      sinceYears: dto.sinceYears ?? null,
     });
     await this.repo.logAudit({
       userId,

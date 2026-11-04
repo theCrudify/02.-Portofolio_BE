@@ -2,7 +2,7 @@ import { z } from '@hono/zod-openapi';
 import { booleanQueryParam, createModuleQuerySchema, flatQueryString } from '@/core/query';
 
 export const listMediaQuerySchema = createModuleQuerySchema({
-  kind: z.enum(['image', 'video', 'document', 'pdf']).optional(),
+  kind: z.string().min(1).max(120).regex(/^[a-z0-9_,-]+$/).optional(), // media_kind code(s), comma-separated
   provider: flatQueryString.optional(),
   includeDeleted: booleanQueryParam,
 });

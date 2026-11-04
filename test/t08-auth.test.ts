@@ -1,74 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getTableName } from 'drizzle-orm';
-import { uuidv7 } from 'uuidv7';
+import { eq } from 'drizzle-orm';
 import { app } from '@/index';
 import { setTestDb, type DbClient } from '@/db/client';
+import { lk } from '@/db/queries/lookups';
+import * as schema from '@/db/schema';
 import { ipHash, visitorHash } from '@/lib/hash';
 import { signSession, verifySession } from '@/lib/jwt';
 import { hashPassword } from '@/lib/password';
 import { generateTotpCode } from '@/lib/totp';
 import { clearMemoryRateLimits } from '@/middleware/rate-limit';
-
-interface AuthTestStore {
-  users: Record<string, unknown>[];
-  login_attempts: Record<string, unknown>[];
-  audit_logs: Record<string, unknown>[];
-}
-
-function createAuthMockDb(store: AuthTestStore): DbClient {
-  return {
-    select: () => ({
-      from: (table: unknown) => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]) as keyof AuthTestStore;
-        const rows = store[name] ?? [];
-        return Object.assign(Promise.resolve(rows), {
-          where: () => Promise.resolve(rows),
-        });
-      },
-    }),
-    insert: (table: unknown) => ({
-      values: (val: Record<string, unknown>) => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]) as keyof AuthTestStore;
-        const row = {
-          id: (val.id as string | undefined) ?? uuidv7(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          tokenVersion: 0,
-          totpEnabled: false,
-          isActive: true,
-          ...val,
-        };
-        store[name].push(row);
-        return Object.assign(Promise.resolve([row]), {
-          returning: () => Promise.resolve([row]),
-        });
-      },
-    }),
-    update: (table: unknown) => ({
-      set: (patch: Record<string, unknown>) => ({
-        where: () => {
-          const name = getTableName(table as Parameters<typeof getTableName>[0]) as keyof AuthTestStore;
-          // Apply patch to matching user or last active target in store
-          for (const row of store[name]) {
-            if (patch.totpSecret !== undefined || patch.totpEnabled !== undefined || patch.tokenVersion !== undefined || patch.lastLoginAt !== undefined || patch.passwordHash !== undefined || patch.role !== undefined || patch.name !== undefined || patch.isActive !== undefined) {
-              Object.assign(row, patch, { updatedAt: new Date() });
-            }
-          }
-          return Promise.resolve();
-        },
-      }),
-    }),
-    delete: (table: unknown) => ({
-      where: () => {
-        const name = getTableName(table as Parameters<typeof getTableName>[0]) as keyof AuthTestStore;
-        if (store[name].length > 1) {
-          store[name].pop();
-        }
-        return Promise.resolve();
-      },
-    }),
-  } as unknown as DbClient;
-}
+import { useTestDb } from './helpers/db';
 
 function extractCookie(res: Response, cookieName: string): string | null {
   const header = res.headers.get('set-cookie');
@@ -78,7 +19,7 @@ function extractCookie(res: Response, cookieName: string): string | null {
 }
 
 describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate', () => {
-  let store: AuthTestStore;
+  let db: DbClient;
   const ownerId = '01950000-0000-7000-8000-000000000001';
   const editorId = '01950000-0000-7000-8000-000000000002';
   const jwtSecret = 'dev-jwt-secret-min-32-chars-long';
@@ -94,42 +35,23 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
     const ownerPwHash = await hashPassword('OwnerSecurePass123!');
     const editorPwHash = await hashPassword('EditorSecurePass123!');
 
-    store = {
-      users: [
-        {
-          id: ownerId,
-          email: 'owner@example.com',
-          name: 'Owner User',
-          passwordHash: ownerPwHash,
-          role: 'owner',
-          totpSecret: null,
-          totpEnabled: false,
-          tokenVersion: 0,
-          isActive: true,
-          lastLoginAt: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: editorId,
-          email: 'editor@example.com',
-          name: 'Editor User',
-          passwordHash: editorPwHash,
-          role: 'editor',
-          totpSecret: null,
-          totpEnabled: false,
-          tokenVersion: 0,
-          isActive: true,
-          lastLoginAt: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ],
-      login_attempts: [],
-      audit_logs: [],
-    };
-
-    setTestDb(createAuthMockDb(store));
+    db = await useTestDb();
+    await db.insert(schema.users).values([
+      {
+        id: ownerId,
+        email: 'owner@example.com',
+        name: 'Owner User',
+        passwordHash: ownerPwHash,
+        roleId: lk('user_role', 'owner'),
+      },
+      {
+        id: editorId,
+        email: 'editor@example.com',
+        name: 'Editor User',
+        passwordHash: editorPwHash,
+        roleId: lk('user_role', 'editor'),
+      },
+    ]);
   });
 
   afterEach(() => {
@@ -292,6 +214,8 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
       },
     });
     expect(logoutAllRes.status).toBe(204);
+    const [owner] = await db.select().from(schema.users).where(eq(schema.users.id, ownerId));
+    expect(owner!.tokenVersion).toBe(1);
 
     // Old token has tv=0, user in DB now has tokenVersion=1 -> rejected with 401
     const meAfter = await request('/v1/auth/me', {
@@ -313,6 +237,40 @@ describe('T08 · Authentication, 2FA TOTP, JWT Session, Rate Limit & Role Gate',
       headers: { Cookie: `pf_session=${ownerToken}` },
     });
     expect(ownerRes.status).toBe(200);
+    const list = await ownerRes.json<{ data: { email: string; role: string }[] }>();
+    expect(list.data.map((u) => [u.email, u.role]).sort()).toEqual([
+      ['editor@example.com', 'editor'],
+      ['owner@example.com', 'owner'],
+    ]);
+  });
+
+  it('creates users with a known role code and rejects an unknown one with 400', async () => {
+    const ownerToken = await signSession({ sub: ownerId, role: 'owner', tv: 0 }, jwtSecret);
+    const create = (role: string, email: string) =>
+      request('/v1/admin/users', {
+        method: 'POST',
+        headers: {
+          Origin: 'http://localhost:3000',
+          'Content-Type': 'application/json',
+          Cookie: `pf_session=${ownerToken}`,
+        },
+        body: JSON.stringify({ email, name: 'New User', role }),
+      });
+
+    const bad = await create('superadmin', 'bad@example.com');
+    expect(bad.status).toBe(400);
+    const badJson = await bad.json<{ error: { code: string } }>();
+    expect(badJson.error.code).toBe('VALIDATION_ERROR');
+    expect(await db.$count(schema.users, eq(schema.users.email, 'bad@example.com'))).toBe(0);
+
+    const ok = await create('viewer', 'viewer@example.com');
+    expect(ok.status).toBe(201);
+    const [created] = await db
+      .select({ role: schema.lookups.code })
+      .from(schema.users)
+      .innerJoin(schema.lookups, eq(schema.lookups.id, schema.users.roleId))
+      .where(eq(schema.users.email, 'viewer@example.com'));
+    expect(created!.role).toBe('viewer');
   });
 });
 
