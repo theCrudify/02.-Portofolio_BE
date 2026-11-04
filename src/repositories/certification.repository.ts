@@ -3,11 +3,13 @@ import type { DbClient } from '@/db/client';
 import { publishedOnly } from '@/db/queries/common';
 import * as schema from '@/db/schema';
 import { fetchContext, type RawContext } from './context.repository';
+import { fetchExtras, type RawExtras } from './extras.repository';
 import { BaseRepository } from './base.repository';
 
 export interface ICertificationRepository {
   findPublishedCertifications(): Promise<(typeof schema.certifications.$inferSelect)[]>;
   fetchContext(): Promise<RawContext>;
+  fetchExtras(ids: string[]): Promise<RawExtras>;
 }
 
 export class DrizzleCertificationRepository
@@ -28,6 +30,10 @@ export class DrizzleCertificationRepository
 
   fetchContext(): Promise<RawContext> {
     return fetchContext(this.db);
+  }
+
+  fetchExtras(ids: string[]): Promise<RawExtras> {
+    return fetchExtras(this.db, 'certification', ids);
   }
 }
 

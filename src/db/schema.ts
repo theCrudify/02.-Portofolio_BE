@@ -13,6 +13,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
@@ -541,6 +542,8 @@ export const certifications = pgTable(
     expiryDate: date('expiry_date'),
     credentialId: varchar('credential_id', { length: 120 }),
     credentialUrl: text('credential_url'),
+    descriptionEn: text('description_en'),
+    descriptionId: text('description_id'),
     imageMediaId: mediaRef('image_media_id'),
     featured: boolean('featured').notNull().default(false),
     ...contentColumns,
@@ -587,6 +590,79 @@ export const activityAchievements = pgTable(
   },
   (t) => [index('activity_achievements_act_idx').on(t.activityId, t.sortOrder)],
 );
+
+/*
+ * Attachments, links and tools/skills of a certificate or an activity. Same shape as the
+ * project tables; one table per parent so foreign keys cascade.
+ */
+const parentRef = (column: string, parent: () => AnyPgColumn) =>
+  uuid(column).notNull().references(parent, { onDelete: 'cascade' });
+const linkTable = (name: string, parentKey: string, parent: () => AnyPgColumn) =>
+  pgTable(
+    name,
+    {
+      id: id(),
+      parentId: parentRef(parentKey, parent),
+      typeId: lookupRef('type_id').notNull(), // link_type
+      label: varchar('label', { length: 80 }).notNull(),
+      url: text('url'),
+      isPrivate: boolean('is_private').notNull().default(false),
+      sortOrder: integer('sort_order').notNull().default(0),
+      ...timestamps,
+    },
+    (t) => [index(`${name}_parent_idx`).on(t.parentId)],
+  );
+const mediaTable = (name: string, parentKey: string, parent: () => AnyPgColumn) =>
+  pgTable(
+    name,
+    {
+      id: id(),
+      parentId: parentRef(parentKey, parent),
+      mediaId: uuid('media_id')
+        .notNull()
+        .references(() => media.id, { onDelete: 'cascade' }),
+      captionEn: varchar('caption_en', { length: 200 }),
+      captionId: varchar('caption_id', { length: 200 }),
+      sortOrder: integer('sort_order').notNull().default(0),
+    },
+    (t) => [index(`${name}_parent_idx`).on(t.parentId), index(`${name}_media_idx`).on(t.mediaId)],
+  );
+const techTable = (name: string, parentKey: string, parent: () => AnyPgColumn) =>
+  pgTable(
+    name,
+    {
+      parentId: parentRef(parentKey, parent),
+      technologyId: uuid('technology_id')
+        .notNull()
+        .references(() => technologies.id, { onDelete: 'cascade' }),
+      sortOrder: integer('sort_order').notNull().default(0),
+    },
+    (t) => [
+      primaryKey({ columns: [t.parentId, t.technologyId] }),
+      index(`${name}_tech_idx`).on(t.technologyId),
+    ],
+  );
+
+export const certificationAchievements = pgTable(
+  'certification_achievements',
+  {
+    id: id(),
+    certificationId: parentRef('certification_id', () => certifications.id),
+    ...bulletColumns,
+    ...timestamps,
+  },
+  (t) => [index('certification_achievements_cert_idx').on(t.certificationId, t.sortOrder)],
+);
+export const certificationLinks = linkTable('certification_links', 'certification_id', () => certifications.id);
+export const certificationMedia = mediaTable('certification_media', 'certification_id', () => certifications.id);
+export const certificationTechnologies = techTable(
+  'certification_technologies',
+  'certification_id',
+  () => certifications.id,
+);
+export const activityLinks = linkTable('activity_links', 'activity_id', () => activities.id);
+export const activityMedia = mediaTable('activity_media', 'activity_id', () => activities.id);
+export const activityTechnologies = techTable('activity_technologies', 'activity_id', () => activities.id);
 
 export const achievements = pgTable(
   'achievements',

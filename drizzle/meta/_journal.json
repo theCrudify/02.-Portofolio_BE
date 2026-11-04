@@ -15,6 +15,13 @@
       "when": 1793807833175,
       "tag": "0001_lookups_organizations_relational",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793831760602,
+      "tag": "0002_cert_activity_attachments",
+      "breakpoints": true
     }
   ]
 }

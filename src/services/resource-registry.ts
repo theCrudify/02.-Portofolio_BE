@@ -5,6 +5,13 @@ import {
   achievements,
   activities,
   activityAchievements,
+  activityLinks,
+  activityMedia,
+  activityTechnologies,
+  certificationAchievements,
+  certificationLinks,
+  certificationMedia,
+  certificationTechnologies,
   certifications,
   education,
   educationActivities,
@@ -90,6 +97,27 @@ const bullets = (key: string, table: PgTable, parentKey: string): ChildSpec => (
   fields: ['textEn', 'textId'],
   sorted: true,
 });
+
+/** Achievements, tools/skills, links and attachments shared by certificates and activities. */
+const portfolioExtras = (
+  achievements: PgTable,
+  achievementsKey: string,
+  links: PgTable,
+  media: PgTable,
+  techs: PgTable,
+): ChildSpec[] => [
+  bullets('achievements', achievements, achievementsKey),
+  { key: 'technologies', table: techs, parentKey: 'parentId', fields: ['technologyId'], sorted: true },
+  {
+    key: 'links',
+    table: links,
+    parentKey: 'parentId',
+    fields: ['typeId', 'label', 'url', 'isPrivate'],
+    sorted: true,
+    lookupFields: { typeId: 'link_type' },
+  },
+  { key: 'media', table: media, parentKey: 'parentId', fields: ['mediaId', 'captionEn', 'captionId'], sorted: true },
+];
 
 export const RESOURCE_REGISTRY: Record<ResourceName, ResourceConfig> = {
   projects: {
@@ -211,6 +239,13 @@ export const RESOURCE_REGISTRY: Record<ResourceName, ResourceConfig> = {
     createSchema: certificationSchema,
     updateSchema: updateSchemas.certifications,
     lookupFields: { typeId: 'cert_type' },
+    children: portfolioExtras(
+      certificationAchievements,
+      'certificationId',
+      certificationLinks,
+      certificationMedia,
+      certificationTechnologies,
+    ),
     searchKeys: ['name', 'credentialId'],
     revalidateTags: () => ['site', 'certifications'],
   },
@@ -220,7 +255,13 @@ export const RESOURCE_REGISTRY: Record<ResourceName, ResourceConfig> = {
     createSchema: activitySchema,
     updateSchema: updateSchemas.activities,
     lookupFields: { typeId: 'activity_type' },
-    children: [bullets('achievements', activityAchievements, 'activityId')],
+    children: portfolioExtras(
+      activityAchievements,
+      'activityId',
+      activityLinks,
+      activityMedia,
+      activityTechnologies,
+    ),
     searchKeys: ['roleEn', 'roleId', 'eventName'],
     revalidateTags: () => ['site'],
   },

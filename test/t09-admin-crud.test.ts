@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { app } from '@/index';
 import { setTestDb, type DbClient } from '@/db/client';
 import { lk } from '@/db/queries/lookups';
-import { auditLogs, experiences, lookups, projects, users } from '@/db/schema';
+import { auditLogs, experiences, lookups, media, projects, technologies, users } from '@/db/schema';
 import { signSession } from '@/lib/jwt';
 import { archived, draft, insertOrganization, lookupIdOf, published, useTestDb } from './helpers/db';
 
@@ -177,6 +177,57 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
       { typeId: demo, label: 'Demo', url: 'https://demo.example.com', isPrivate: false },
     ]);
     expect(data.experiences).toEqual([{ experienceId: exp!.id }]);
+  });
+
+  it('saves a certificate with description, attachments, links, achievements and skills, and shows them publicly', async () => {
+    const issuer = await insertOrganization(db, { name: 'Dicoding', type: 'certification_issuer' });
+    const [pdf, photo] = await db
+      .insert(media)
+      .values([
+        { providerId: lk('media_provider', 'cloudinary'), kindId: lk('media_kind', 'pdf'), url: 'https://res.cloudinary.com/demo/raw/upload/cert.pdf' },
+        { providerId: lk('media_provider', 'cloudinary'), kindId: lk('media_kind', 'image'), url: 'https://res.cloudinary.com/demo/image/upload/photo.jpg' },
+      ])
+      .returning({ id: media.id });
+    const [tech] = await db
+      .insert(technologies)
+      .values({ name: 'Docker', slug: 'docker', categoryId: lk('tech_category', 'tools'), ...published() })
+      .returning({ id: technologies.id });
+    const other = await lookupIdOf(db, 'link_type', 'other');
+
+    const createRes = await app.request(
+      '/v1/admin/certifications',
+      json(ownerCookie, 'POST', {
+        typeId: await lookupIdOf(db, 'cert_type', 'bootcamp'),
+        name: 'Cloud Bootcamp',
+        issuerOrganizationId: issuer,
+        descriptionEn: 'A long description.',
+        achievements: [{ textEn: 'Top 10 graduate' }],
+        technologies: [{ technologyId: tech!.id }],
+        links: [{ typeId: other, label: 'LinkedIn post', url: 'https://www.linkedin.com/posts/x' }],
+        media: [{ mediaId: pdf!.id, captionEn: 'Certificate' }, { mediaId: photo!.id }],
+      }),
+      env,
+    );
+    expect(createRes.status).toBe(201);
+    const { data: created } = (await createRes.json()) as { data: Record<string, unknown> & { id: string } };
+    expect(created.media).toEqual([
+      { mediaId: pdf!.id, captionEn: 'Certificate', captionId: null },
+      { mediaId: photo!.id, captionEn: null, captionId: null },
+    ]);
+    await app.request(`/v1/admin/certifications/${created.id}/publish`, bare(ownerCookie, 'POST'), env);
+
+    const res = await app.request('/v1/certifications', {}, env);
+    const { data } = (await res.json()) as { data: Record<string, unknown>[] };
+    expect(data[0]).toMatchObject({
+      description: 'A long description.',
+      achievements: ['Top 10 graduate'],
+      technologies: [{ name: 'Docker', slug: 'docker' }],
+      links: [{ label: 'LinkedIn post', url: 'https://www.linkedin.com/posts/x', type: { code: 'other' } }],
+      attachments: [
+        { id: pdf!.id, kind: 'pdf', caption: 'Certificate' },
+        { id: photo!.id, kind: 'image', caption: null },
+      ],
+    });
   });
 
   it('replaces only the child collections sent on update', async () => {

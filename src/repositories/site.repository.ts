@@ -4,6 +4,7 @@ import { publishedOnly } from '@/db/queries/common';
 import { lk } from '@/db/queries/lookups';
 import * as schema from '@/db/schema';
 import { fetchContext, type RawContext } from './context.repository';
+import { fetchExtras, type RawExtras } from './extras.repository';
 import { BaseRepository } from './base.repository';
 
 type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'];
@@ -37,7 +38,8 @@ export interface RawSiteData {
   expAchievementRows: Row<typeof schema.experienceAchievements>[];
   expProjectRows: Row<typeof schema.experienceProjects>[];
   eduActivityRows: Row<typeof schema.educationActivities>[];
-  activityAchievementRows: Row<typeof schema.activityAchievements>[];
+  certExtras: RawExtras;
+  activityExtras: RawExtras;
 }
 
 export interface ISiteRepository {
@@ -115,7 +117,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       expAchievementRows,
       expProjectRows,
       eduActivityRows,
-      activityAchievementRows,
+      certExtras,
+      activityExtras,
     ] = await Promise.all([
       projectIds.length
         ? db.select().from(schema.projectTechnologies).where(inArray(schema.projectTechnologies.projectId, projectIds))
@@ -155,9 +158,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       educationIds.length
         ? db.select().from(schema.educationActivities).where(inArray(schema.educationActivities.educationId, educationIds))
         : none,
-      activityIds.length
-        ? db.select().from(schema.activityAchievements).where(inArray(schema.activityAchievements.activityId, activityIds))
-        : none,
+      fetchExtras(db, 'certification', certRows.map((c) => c.id)),
+      fetchExtras(db, 'activity', activityIds),
     ]);
 
     return {
@@ -189,7 +191,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       expAchievementRows,
       expProjectRows,
       eduActivityRows,
-      activityAchievementRows,
+      certExtras,
+      activityExtras,
     };
   }
 }

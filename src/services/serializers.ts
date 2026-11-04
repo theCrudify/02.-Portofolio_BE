@@ -2,6 +2,7 @@ import type { SupportedLocale } from '@/lib/locale';
 import { pickLocale } from '@/lib/locale';
 import type * as schema from '@/db/schema';
 import type { LookupIndex, PublicLookup } from '@/db/queries/lookups';
+import type { RawExtras } from '@/repositories/extras.repository';
 
 export type MediaRow = typeof schema.media.$inferSelect;
 export type OrganizationRow = typeof schema.organizations.$inferSelect;
@@ -199,7 +200,10 @@ export interface PublicProjectLink {
   isPrivate: boolean;
 }
 
-export function toProjectLink(row: ProjectLinkRow, ctx: SerializeContext): PublicProjectLink {
+export function toProjectLink(
+  row: Pick<ProjectLinkRow, 'typeId' | 'label' | 'url' | 'isPrivate'>,
+  ctx: SerializeContext,
+): PublicProjectLink {
   return {
     type: requiredLookup(ctx, row.typeId),
     label: row.label,
@@ -388,9 +392,25 @@ export function toEducation(row: EducationRow, ctx: SerializeContext, activities
   };
 }
 
+/** Achievements, tools/skills, links and attachments (images, PDFs) of one certificate or activity. */
+export function toExtras(ctx: SerializeContext, parentId: string, extras: RawExtras) {
+  const own = <T extends { parentId: string; sortOrder: number }>(rows: T[]) =>
+    rows.filter((r) => r.parentId === parentId).sort((a, b) => a.sortOrder - b.sortOrder);
+  return {
+    achievements: toBullets(own(extras.achievements), ctx.locale),
+    technologies: own(extras.technologies).map((t) => toTechChip(t.tech)),
+    links: own(extras.links).map((l) => toProjectLink(l, ctx)),
+    attachments: own(extras.media).flatMap((relation) => {
+      const m = toMedia(ctx.media.get(relation.mediaId), ctx);
+      return m ? [{ ...m, caption: pickLocale(relation, 'caption', ctx.locale) }] : [];
+    }),
+  };
+}
+
 export function toCertification(
   row: CertificationRow,
   ctx: SerializeContext,
+  extras: RawExtras,
   nowDate: Date = new Date(),
 ) {
   const todayIso = nowDate.toISOString().slice(0, 10);
@@ -404,12 +424,14 @@ export function toCertification(
     isExpired: Boolean(row.expiryDate && row.expiryDate < todayIso),
     credentialId: row.credentialId ?? null,
     credentialUrl: row.credentialUrl ?? null,
+    description: pickLocale(row, 'description', ctx.locale),
     image: imageOf(ctx, row.imageMediaId, row.name),
     featured: row.featured,
+    ...toExtras(ctx, row.id, extras),
   };
 }
 
-export function toActivity(row: ActivityRow, ctx: SerializeContext, achievements: BulletRow[]) {
+export function toActivity(row: ActivityRow, ctx: SerializeContext, extras: RawExtras) {
   return {
     id: row.id,
     type: requiredLookup(ctx, row.typeId),
@@ -419,9 +441,9 @@ export function toActivity(row: ActivityRow, ctx: SerializeContext, achievements
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
     description: pickLocale(row, 'description', ctx.locale),
-    achievements: toBullets(achievements, ctx.locale),
     media: imageOf(ctx, row.mediaId),
     linkUrl: row.linkUrl ?? null,
+    ...toExtras(ctx, row.id, extras),
   };
 }
 

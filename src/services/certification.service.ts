@@ -43,7 +43,8 @@ export class CertificationService {
         const ctx = toContext(rawContext, locale);
         const typeId = type ? ctx.lookups.idOf('cert_type', type) : null;
         const filtered = type ? certRows.filter((c) => c.typeId === typeId) : certRows;
-        return filtered.map((cert) => toCertification(cert, ctx));
+        const extras = await this.certRepo.fetchExtras(filtered.map((c) => c.id));
+        return filtered.map((cert) => toCertification(cert, ctx, extras));
       },
       ['certifications'],
     );

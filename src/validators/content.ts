@@ -66,6 +66,10 @@ export const childSchemas = {
       }),
     )
     .max(40),
+  /** Images / PDFs attached to a certificate or activity (kind comes from the media row). */
+  attachments: z
+    .array(z.object({ mediaId: uuid, captionEn: optText(200), captionId: optText(200) }))
+    .max(40),
   experienceIds: z.array(z.object({ experienceId: uuid })).max(20),
   projectIds: z.array(z.object({ projectId: uuid })).max(100),
   technologyIds: z.array(z.object({ technologyId: uuid })).max(40),
@@ -195,9 +199,15 @@ const certificationFields = {
   expiryDate: optDate,
   credentialId: optText(120),
   credentialUrl: optUrl,
+  descriptionEn: optText(),
+  descriptionId: optText(),
   imageMediaId: optUuid,
   featured: z.boolean().optional(),
   sortOrder,
+  achievements: childSchemas.achievements.optional(),
+  technologies: childSchemas.technologyIds.optional(),
+  links: childSchemas.links.optional(),
+  media: childSchemas.attachments.optional(),
 };
 export const certificationSchema = z.object(certificationFields);
 
@@ -215,6 +225,9 @@ const activityFields = {
   linkUrl: optUrl,
   sortOrder,
   achievements: childSchemas.achievements.optional(),
+  technologies: childSchemas.technologyIds.optional(),
+  links: childSchemas.links.optional(),
+  media: childSchemas.attachments.optional(),
 };
 export const activitySchema = z.object(activityFields);
 
