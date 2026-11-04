@@ -1,10 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { createContainer } from '@/core/container';
 import { getDb } from '@/db/client';
-import { parseLocale } from '@/lib/locale';
-import { ok } from '@/lib/response';
-import { listCertifications } from '@/services/certification.service';
-import { getProjectBySlug, listProjects } from '@/services/project.service';
-import { getSite } from '@/services/site.service';
 import type { AppEnv } from '@/types/env';
 import {
   certificationsQuerySchema,
@@ -12,8 +8,6 @@ import {
   projectsQuerySchema,
   siteQuerySchema,
 } from '@/validators/public';
-
-export const PUBLIC_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=86400';
 
 export const publicRoute = new OpenAPIHono<AppEnv>({
   defaultHook: (result) => {
@@ -42,16 +36,16 @@ const getSiteRoute = createRoute({
         },
       },
     },
+    304: {
+      description: 'Not modified',
+    },
   },
 });
 
 publicRoute.openapi(getSiteRoute, async (c) => {
-  const { locale: rawLocale } = c.req.valid('query');
-  const locale = parseLocale(rawLocale);
   const db = getDb(c.env);
-  const data = await getSite(db, locale);
-  c.header('Cache-Control', PUBLIC_CACHE_CONTROL);
-  return ok(c, data);
+  const container = createContainer(db);
+  return container.publicController.getSite(c);
 });
 
 const getProjectsRoute = createRoute({
@@ -78,22 +72,16 @@ const getProjectsRoute = createRoute({
         },
       },
     },
+    304: {
+      description: 'Not modified',
+    },
   },
 });
 
 publicRoute.openapi(getProjectsRoute, async (c) => {
-  const query = c.req.valid('query');
-  const locale = parseLocale(query.locale);
   const db = getDb(c.env);
-  const result = await listProjects(db, {
-    locale,
-    technology: query.technology,
-    type: query.type,
-    page: query.page,
-    limit: query.limit,
-  });
-  c.header('Cache-Control', PUBLIC_CACHE_CONTROL);
-  return ok(c, result.items, result.meta);
+  const container = createContainer(db);
+  return container.publicController.listProjects(c);
 });
 
 const getProjectBySlugRoute = createRoute({
@@ -116,6 +104,9 @@ const getProjectBySlugRoute = createRoute({
         },
       },
     },
+    304: {
+      description: 'Not modified',
+    },
     404: {
       description: 'Project not found or not published',
     },
@@ -123,13 +114,9 @@ const getProjectBySlugRoute = createRoute({
 });
 
 publicRoute.openapi(getProjectBySlugRoute, async (c) => {
-  const { slug } = c.req.valid('param');
-  const { locale: rawLocale } = c.req.valid('query');
-  const locale = parseLocale(rawLocale);
   const db = getDb(c.env);
-  const detail = await getProjectBySlug(db, slug, locale);
-  c.header('Cache-Control', PUBLIC_CACHE_CONTROL);
-  return ok(c, detail);
+  const container = createContainer(db);
+  return container.publicController.getProjectBySlug(c);
 });
 
 const getCertificationsRoute = createRoute({
@@ -151,17 +138,14 @@ const getCertificationsRoute = createRoute({
         },
       },
     },
+    304: {
+      description: 'Not modified',
+    },
   },
 });
 
 publicRoute.openapi(getCertificationsRoute, async (c) => {
-  const query = c.req.valid('query');
-  const locale = parseLocale(query.locale);
   const db = getDb(c.env);
-  const items = await listCertifications(db, {
-    locale,
-    type: query.type,
-  });
-  c.header('Cache-Control', PUBLIC_CACHE_CONTROL);
-  return ok(c, items);
+  const container = createContainer(db);
+  return container.publicController.listCertifications(c);
 });

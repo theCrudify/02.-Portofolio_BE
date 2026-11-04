@@ -11,6 +11,8 @@ export default defineWorkersConfig({
   },
   test: {
     globals: true,
+    include: ['test/**/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/.git/**'],
     poolOptions: {
       workers: {
         wrangler: { configPath: './wrangler.toml' },

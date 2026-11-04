@@ -1,6 +1,10 @@
+import { defaultCacheService } from '@/core/cache/memory-cache.service';
 import type { Env } from '../types/env';
 
 export async function revalidate(env: Env, tags: string[]): Promise<void> {
+  // Invalidate in-memory & edge cache tags immediately
+  await defaultCacheService.invalidateTags(tags);
+
   if (!env.FRONTEND_URL || !env.REVALIDATE_SECRET) {
     return;
   }
@@ -17,4 +21,5 @@ export async function revalidate(env: Env, tags: string[]): Promise<void> {
     console.warn('Revalidate webhook warning:', err);
   }
 }
+
 
