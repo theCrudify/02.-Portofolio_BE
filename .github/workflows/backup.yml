@@ -10,7 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client openssl
+        # Ubuntu's own pg_dump is older than Neon's Postgres and refuses to dump it; PGDG ships the latest client.
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client openssl
 
       - name: Dump and Encrypt Neon PostgreSQL Database
         env:
