@@ -30,3 +30,4 @@ export function pickLocale<T extends Record<string, unknown>>(
   }
   return null;
 }
+

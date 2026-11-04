@@ -42,3 +42,4 @@ export const updateUserBodySchema = z.object({
 export const userIdParamSchema = z.object({
   id: z.string().uuid(),
 });
+

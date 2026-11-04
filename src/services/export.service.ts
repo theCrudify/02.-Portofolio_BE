@@ -251,3 +251,4 @@ export async function buildJsonResume(db: Database, locale: 'en' | 'id' = 'en') 
     })),
   };
 }
+

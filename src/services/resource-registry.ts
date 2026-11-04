@@ -124,3 +124,4 @@ export function getResourceConfig(name: string): ResourceConfig | null {
   }
   return null;
 }
+

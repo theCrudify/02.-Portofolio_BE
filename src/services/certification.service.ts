@@ -35,3 +35,4 @@ export async function listCertifications(db: DbClient, options: ListCertificatio
     return toCertification(cert, issuerMedia, imageMedia, locale);
   });
 }
+

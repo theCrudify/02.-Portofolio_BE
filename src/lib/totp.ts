@@ -177,3 +177,4 @@ export async function decryptTotpSecret(
   const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
   return new TextDecoder().decode(plainBuf);
 }
+

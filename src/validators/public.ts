@@ -58,3 +58,4 @@ export const certificationsQuerySchema = z.object({
     .optional()
     .openapi({ param: { name: 'type', in: 'query' } }),
 });
+

@@ -101,3 +101,4 @@ export async function verifyPre2faToken(
     throw unauthenticated('Invalid or expired 2FA session');
   }
 }
+

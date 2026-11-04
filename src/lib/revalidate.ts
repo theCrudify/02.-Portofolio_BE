@@ -17,3 +17,4 @@ export async function revalidate(env: Env, tags: string[]): Promise<void> {
     console.warn('Revalidate webhook warning:', err);
   }
 }
+

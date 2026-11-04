@@ -16,3 +16,4 @@ export function deviceOf(ua: string | null | undefined): 'mobile' | 'tablet' | '
   }
   return 'desktop';
 }
+

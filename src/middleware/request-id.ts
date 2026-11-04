@@ -8,3 +8,4 @@ export const requestIdMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   c.header('x-request-id', id);
   await next();
 });
+

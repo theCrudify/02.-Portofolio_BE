@@ -50,3 +50,4 @@ export function parseSort(
 
   return isDesc ? desc(col) : asc(col);
 }
+

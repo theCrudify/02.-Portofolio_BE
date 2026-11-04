@@ -50,3 +50,4 @@ adminUsersRoute.delete('/:id', async (c) => {
   await deleteUserAccount(db, actor, id);
   return c.body(null, 204);
 });
+

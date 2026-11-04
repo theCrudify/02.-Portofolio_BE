@@ -29,3 +29,4 @@ export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
 export const notFoundHandler: NotFoundHandler<AppEnv> = (c) => {
   return fail(c, 404, 'NOT_FOUND', `Route ${c.req.method} ${c.req.path} not found`);
 };
+

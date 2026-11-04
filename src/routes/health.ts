@@ -48,3 +48,4 @@ healthRoute.openapi(getHealthRoute, async (c) => {
     time: new Date().toISOString(),
   });
 });
+

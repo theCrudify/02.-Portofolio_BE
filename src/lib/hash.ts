@@ -22,3 +22,4 @@ export async function visitorHash(
 ): Promise<string> {
   return sha256Hex(`${ip}:${userAgent}:${utcDate}:${salt}`);
 }
+

@@ -392,3 +392,4 @@ export const projectMediaSchema = z.object({
 export const experienceTechnologiesSchema = z.object({
   technologyIds: z.array(z.string().uuid()).max(30),
 });
+

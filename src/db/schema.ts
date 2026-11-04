@@ -678,3 +678,4 @@ export const githubCache = pgTable('github_cache', {
   data: jsonb('data').notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
 });
+

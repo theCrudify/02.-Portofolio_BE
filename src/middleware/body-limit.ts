@@ -9,3 +9,4 @@ export const bodyLimitMiddleware = bodyLimit({
     return fail(c, 413, 'PAYLOAD_TOO_LARGE', 'Request payload exceeds 1 MB limit');
   },
 });
+

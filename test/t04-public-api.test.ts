@@ -476,3 +476,4 @@ describe('T04 · Public API Endpoints', () => {
     expect(spec.paths['/v1/certifications']).toBeDefined();
   });
 });
+

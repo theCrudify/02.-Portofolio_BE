@@ -233,3 +233,4 @@ describe('T11 · Analytics Events, Bot Filter, Daily Cron Aggregation & Contact 
     expect(store.daily_stats[0]!.uniqueVisitors).toBe(2);
   });
 });
+

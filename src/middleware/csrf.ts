@@ -37,3 +37,4 @@ export const csrfMiddleware = createMiddleware<AppEnv>(async (c, next) => {
 
   await next();
 });
+

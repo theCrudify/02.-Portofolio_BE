@@ -34,3 +34,4 @@ export async function reportErrorToSentry(
     // Fail silently if Sentry reporting fails
   }
 }
+

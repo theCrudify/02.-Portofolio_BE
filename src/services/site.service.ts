@@ -250,3 +250,4 @@ export async function getSite(db: DbClient, locale: SupportedLocale) {
     featuredProjects,
   };
 }
+

@@ -27,3 +27,4 @@ jobs:
           name: portfolio-db-backup-${{ github.run_id }}
           path: portfolio-db-*.sql.gz.enc
           retention-days: 90
+

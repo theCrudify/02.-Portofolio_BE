@@ -243,3 +243,4 @@ authRoute.post('/password', requireAuth, async (c) => {
   deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' });
   return c.body(null, 204);
 });
+
