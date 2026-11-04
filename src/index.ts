@@ -7,12 +7,16 @@ import { csrfMiddleware } from '@/middleware/csrf';
 import { errorHandler, notFoundHandler } from '@/middleware/error';
 import { requestIdMiddleware } from '@/middleware/request-id';
 import adminAnalytics from '@/routes/admin/analytics';
+import adminDocuments from '@/routes/admin/documents';
 import adminMedia from '@/routes/admin/media';
 import adminResources from '@/routes/admin/resources';
+import adminSystem from '@/routes/admin/system';
 import { adminUsersRoute } from '@/routes/admin/users';
 import { authRoute } from '@/routes/auth';
 import { registerDocsRoutes } from '@/routes/docs';
+import { documentsExportRoute } from '@/routes/documents-export';
 import { eventsAndContactRoute } from '@/routes/events';
+
 import { healthRoute } from '@/routes/health';
 import { publicRoute } from '@/routes/public';
 import { runNightlyCron } from '@/services/analytics.service';
@@ -70,13 +74,17 @@ export function createApp(): OpenAPIHono<AppEnv> {
   // Routes
   app.route('/', healthRoute);
   app.route('/v1', publicRoute);
+  app.route('/', documentsExportRoute);
   app.route('/', eventsAndContactRoute);
   app.route('/v1/auth', authRoute);
   app.route('/v1/admin/users', adminUsersRoute);
   app.route('/', adminMedia);
   app.route('/', adminAnalytics);
+  app.route('/', adminDocuments);
+  app.route('/', adminSystem);
   app.route('/', adminResources);
   registerDocsRoutes(app);
+
 
   return app;
 }
