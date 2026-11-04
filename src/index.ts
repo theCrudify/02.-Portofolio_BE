@@ -6,6 +6,8 @@ import { csrfMiddleware } from '@/middleware/csrf';
 import { errorHandler, notFoundHandler } from '@/middleware/error';
 import { requestIdMiddleware } from '@/middleware/request-id';
 import { registerDocsRoutes } from '@/routes/docs';
+import { adminUsersRoute } from '@/routes/admin/users';
+import { authRoute } from '@/routes/auth';
 import { healthRoute } from '@/routes/health';
 import { publicRoute } from '@/routes/public';
 import type { AppEnv, Bindings } from '@/types/env';
@@ -62,6 +64,8 @@ export function createApp(): OpenAPIHono<AppEnv> {
   // Routes
   app.route('/', healthRoute);
   app.route('/v1', publicRoute);
+  app.route('/v1/auth', authRoute);
+  app.route('/v1/admin/users', adminUsersRoute);
   registerDocsRoutes(app);
 
   return app;
