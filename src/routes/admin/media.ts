@@ -1,28 +1,21 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb, type Database } from '../../db/client';
-import {
-  media,
-  profile,
-  siteSettings,
-  projects,
-  projectMedia,
-  experiences,
-  education,
-  certifications,
-  activities,
-  achievements,
-  publications,
-  testimonials,
-  documents,
-} from '../../db/schema';
+import { getDb } from '../../db/client';
 import { signUpload, validateRegisteredMedia } from '../../lib/cloudinary';
 import { AppError } from '../../lib/errors';
 import { resolveVideoEmbed } from '../../lib/oembed';
 import { ok } from '../../lib/response';
 import { requireRole } from '../../middleware/require-role';
 import { writeAuditLog } from '../../services/content.service';
+import { revalidate } from '../../lib/revalidate';
+import {
+  createMedia,
+  findMediaUsages,
+  getMedia,
+  listMedia,
+  softDeleteMedia,
+  updateMedia,
+} from '../../services/media.service';
 import type { AppBindings } from '../../types/env';
 
 const signSchema = z.object({
@@ -65,87 +58,6 @@ const updateMediaSchema = z.object({
   captionsUrl: z.string().url().optional().nullable(),
 });
 
-export async function findMediaUsages(
-  db: Database,
-  mediaId: string
-): Promise<{ resource: string; id: string }[]> {
-  const usages: { resource: string; id: string }[] = [];
-
-  const profRows = await db
-    .select()
-    .from(profile)
-    .where(eq(profile.avatarMediaId, mediaId));
-  for (const r of profRows) usages.push({ resource: 'profile', id: String(r.id) });
-
-  const settingsRows = await db
-    .select()
-    .from(siteSettings)
-    .where(eq(siteSettings.ogMediaId, mediaId));
-  for (const r of settingsRows) usages.push({ resource: 'site_settings', id: String(r.id) });
-
-  const projCover = await db
-    .select()
-    .from(projects)
-    .where(and(eq(projects.coverMediaId, mediaId), isNull(projects.deletedAt)));
-  for (const r of projCover) usages.push({ resource: 'projects', id: r.id });
-
-  const projMediaRows = await db
-    .select()
-    .from(projectMedia)
-    .where(eq(projectMedia.mediaId, mediaId));
-  for (const r of projMediaRows) usages.push({ resource: 'project_media', id: r.projectId });
-
-  const expRows = await db
-    .select()
-    .from(experiences)
-    .where(and(eq(experiences.companyMediaId, mediaId), isNull(experiences.deletedAt)));
-  for (const r of expRows) usages.push({ resource: 'experiences', id: r.id });
-
-  const eduRows = await db
-    .select()
-    .from(education)
-    .where(and(eq(education.logoMediaId, mediaId), isNull(education.deletedAt)));
-  for (const r of eduRows) usages.push({ resource: 'education', id: r.id });
-
-  const certRows = await db
-    .select()
-    .from(certifications)
-    .where(and(eq(certifications.imageMediaId, mediaId), isNull(certifications.deletedAt)));
-  for (const r of certRows) usages.push({ resource: 'certifications', id: r.id });
-
-  const actRows = await db
-    .select()
-    .from(activities)
-    .where(and(eq(activities.mediaId, mediaId), isNull(activities.deletedAt)));
-  for (const r of actRows) usages.push({ resource: 'activities', id: r.id });
-
-  const achRows = await db
-    .select()
-    .from(achievements)
-    .where(and(eq(achievements.certificateMediaId, mediaId), isNull(achievements.deletedAt)));
-  for (const r of achRows) usages.push({ resource: 'achievements', id: r.id });
-
-  const pubRows = await db
-    .select()
-    .from(publications)
-    .where(and(eq(publications.videoMediaId, mediaId), isNull(publications.deletedAt)));
-  for (const r of pubRows) usages.push({ resource: 'publications', id: r.id });
-
-  const testRows = await db
-    .select()
-    .from(testimonials)
-    .where(and(eq(testimonials.avatarMediaId, mediaId), isNull(testimonials.deletedAt)));
-  for (const r of testRows) usages.push({ resource: 'testimonials', id: r.id });
-
-  const docRows = await db
-    .select()
-    .from(documents)
-    .where(eq(documents.mediaId, mediaId));
-  for (const r of docRows) usages.push({ resource: 'documents', id: r.id });
-
-  return usages;
-}
-
 const adminMedia = new OpenAPIHono<AppBindings>();
 
 adminMedia.post('/v1/admin/media/sign', requireRole('owner', 'editor'), async (c) => {
@@ -181,9 +93,7 @@ adminMedia.post('/v1/admin/media', requireRole('owner', 'editor'), async (c) => 
 
   const db = getDb(c.env);
   const user = c.get('user')!;
-  const [created] = await db
-    .insert(media)
-    .values({
+  const created = await createMedia(db, {
       provider: 'cloudinary',
       kind: dbKind,
       publicId: parsed.data.publicId,
@@ -200,14 +110,13 @@ adminMedia.post('/v1/admin/media', requireRole('owner', 'editor'), async (c) => 
       altEn: parsed.data.altEn ?? null,
       altId: parsed.data.altId ?? null,
       uploadedBy: user.id,
-    })
-    .returning();
+  });
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'create',
     resource: 'media',
-    resourceId: created!.id,
+    resourceId: created.id,
     summary: `Uploaded ${dbKind} (${parsed.data.publicId})`,
   });
 
@@ -225,9 +134,7 @@ adminMedia.post('/v1/admin/media/embed', requireRole('owner', 'editor'), async (
   const db = getDb(c.env);
   const user = c.get('user')!;
 
-  const [created] = await db
-    .insert(media)
-    .values({
+  const created = await createMedia(db, {
       provider: resolved.provider,
       kind: 'video',
       embedId: resolved.embedId,
@@ -239,14 +146,13 @@ adminMedia.post('/v1/admin/media/embed', requireRole('owner', 'editor'), async (
       altEn: parsed.data.altEn ?? null,
       altId: parsed.data.altId ?? null,
       uploadedBy: user.id,
-    })
-    .returning();
+  });
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'create',
     resource: 'media',
-    resourceId: created!.id,
+    resourceId: created.id,
     summary: `Embedded ${resolved.provider} video (${resolved.embedId})`,
   });
 
@@ -261,25 +167,18 @@ adminMedia.get('/v1/admin/media', requireRole('viewer'), async (c) => {
       : rawKind === 'image' || rawKind === 'video'
         ? rawKind
         : undefined;
-  const page = Math.max(1, Number(c.req.query('page') ?? 1));
-  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50)));
-  const offset = (page - 1) * limit;
+  const { rows, meta } = await listMedia(getDb(c.env), {
+    kind: dbKind,
+    page: Number(c.req.query('page') ?? 1),
+    limit: Number(c.req.query('limit') ?? 50),
+  });
+  return ok(c, rows, meta);
+});
 
-  const db = getDb(c.env);
-  const conds = [isNull(media.deletedAt)];
-  if (dbKind) {
-    conds.push(eq(media.kind, dbKind));
-  }
-
-  const rows = await db
-    .select()
-    .from(media)
-    .where(and(...conds))
-    .orderBy(desc(media.createdAt))
-    .limit(limit)
-    .offset(offset);
-
-  return ok(c, rows, { page, limit, total: rows.length });
+adminMedia.get('/v1/admin/media/:id', requireRole('viewer'), async (c) => {
+  const row = await getMedia(getDb(c.env), c.req.param('id'));
+  if (!row) throw new AppError(404, 'NOT_FOUND', 'Media asset not found');
+  return ok(c, row);
 });
 
 adminMedia.put('/v1/admin/media/:id', requireRole('owner', 'editor'), async (c) => {
@@ -292,11 +191,7 @@ adminMedia.put('/v1/admin/media/:id', requireRole('owner', 'editor'), async (c) 
 
   const db = getDb(c.env);
   const user = c.get('user')!;
-  const [updated] = await db
-    .update(media)
-    .set({ ...parsed.data, updatedAt: new Date() })
-    .where(eq(media.id, id))
-    .returning();
+  const updated = await updateMedia(db, id, parsed.data);
 
   if (!updated) {
     throw new AppError(404, 'NOT_FOUND', 'Media asset not found');
@@ -310,6 +205,8 @@ adminMedia.put('/v1/admin/media/:id', requireRole('owner', 'editor'), async (c) 
     summary: 'Updated media metadata',
   });
 
+  // Alt text and titles render on public pages.
+  await revalidate(c.env, ['site', 'projects', 'certifications']);
   return ok(c, updated);
 });
 
@@ -328,10 +225,9 @@ adminMedia.delete('/v1/admin/media/:id', requireRole('owner'), async (c) => {
     );
   }
 
-  await db
-    .update(media)
-    .set({ deletedAt: new Date(), updatedAt: new Date() })
-    .where(eq(media.id, id));
+  if (!(await softDeleteMedia(db, id))) {
+    throw new AppError(404, 'NOT_FOUND', 'Media asset not found');
+  }
 
   await writeAuditLog(db, {
     userId: user.id,

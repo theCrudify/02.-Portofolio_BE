@@ -29,8 +29,11 @@ adminAnalytics.get('/v1/admin/analytics', requireRole('viewer'), async (c) => {
 
 adminAnalytics.get('/v1/admin/messages', requireRole('viewer'), async (c) => {
   const db = getDb(c.env);
-  const rows = await listAdminMessages(db);
-  return ok(c, rows);
+  const { rows, meta } = await listAdminMessages(db, {
+    page: Number(c.req.query('page') ?? 1),
+    limit: Number(c.req.query('limit') ?? 50),
+  });
+  return ok(c, rows, meta);
 });
 
 adminAnalytics.patch('/v1/admin/messages/:id', requireRole('owner', 'editor'), async (c) => {

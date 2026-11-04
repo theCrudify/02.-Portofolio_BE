@@ -2,13 +2,13 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { getCookie } from 'hono/cookie';
 import { z } from 'zod';
 import { getDb } from '../db/client';
-import { events, messages } from '../db/schema';
 import { AppError } from '../lib/errors';
 import { getHashSalt, ipHash, visitorHash } from '../lib/hash';
 import { ok } from '../lib/response';
 import { deviceOf, isBot } from '../lib/ua';
 import { SESSION_COOKIE_NAME } from '../middleware/auth';
 import { memoryRateLimit } from '../middleware/rate-limit';
+import { recordEvent, saveContactMessage } from '../services/analytics.service';
 import type { AppBindings } from '../types/env';
 
 const eventSchema = z.object({
@@ -74,7 +74,7 @@ eventsAndContactRoute.post('/v1/events', async (c) => {
   const device = deviceOf(ua);
 
   const db = getDb(c.env);
-  await db.insert(events).values({
+  await recordEvent(db, {
     type: parsed.data.type,
     path: parsed.data.path,
     locale: parsed.data.locale ?? null,
@@ -154,9 +154,7 @@ eventsAndContactRoute.post('/v1/contact', async (c) => {
   }
 
   const db = getDb(c.env);
-  const [saved] = await db
-    .insert(messages)
-    .values({
+  const saved = await saveContactMessage(db, {
       name: parsed.data.name,
       email: parsed.data.email,
       subject: parsed.data.subject ?? null,
@@ -164,8 +162,7 @@ eventsAndContactRoute.post('/v1/contact', async (c) => {
       locale: parsed.data.locale ?? 'en',
       isRead: false,
       isArchived: false,
-    })
-    .returning();
+  });
 
   // Optional Resend notification
   if (c.env?.RESEND_API_KEY && c.env.RESEND_API_KEY !== 're' && c.env?.CONTACT_TO_EMAIL) {

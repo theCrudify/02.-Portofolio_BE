@@ -33,6 +33,8 @@ function createCrudMockDb(store: CrudStore): DbClient {
   };
 
   return {
+    $count: (table: unknown) =>
+      Promise.resolve((store[getTableName(table as Parameters<typeof getTableName>[0])] ?? []).length),
     select: () => ({
       from: (table: unknown) => {
         const name = getTableName(table as Parameters<typeof getTableName>[0]);
@@ -355,6 +357,18 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
       env
     );
     expect(create.status).toBe(403);
+  });
+
+  it('reports the true total across pages, not just the current page size', async () => {
+    for (const n of [1, 2, 3]) {
+      store.projects.push({ id: `01950000-0000-7000-8000-00000000f00${n}`, slug: `p${n}`, status: 'draft', deletedAt: null, sortOrder: n });
+    }
+    const res = await app.request('/v1/admin/projects?limit=1', { headers: { Cookie: viewerCookie } }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[]; meta: { total: number; limit: number } };
+    expect(body.data).toHaveLength(1);
+    expect(body.meta.limit).toBe(1);
+    expect(body.meta.total).toBe(store.projects.length);
   });
 
   it('reorders with PUT { ids } as editor in a single batch and writes audit log', async () => {

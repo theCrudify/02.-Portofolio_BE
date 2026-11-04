@@ -1,4 +1,4 @@
-import { asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { DbClient } from '@/db/client';
 import { paginate, publishedOnly } from '@/db/queries/common';
 import * as schema from '@/db/schema';
@@ -20,23 +20,28 @@ export interface ListProjectsOptions {
   limit?: number;
 }
 
+// Fetch only the media rows a response actually references.
+async function loadMedia(db: DbClient, ids: (string | null | undefined)[]) {
+  const unique = [...new Set(ids.filter((id): id is string => Boolean(id)))];
+  if (unique.length === 0) return [];
+  return db
+    .select()
+    .from(schema.media)
+    .where(and(inArray(schema.media.id, unique), isNull(schema.media.deletedAt)));
+}
+
 export async function listProjects(db: DbClient, options: ListProjectsOptions) {
   const { locale, technology, type } = options;
   const { page, limit, offset } = paginate({ page: options.page, limit: options.limit });
 
-  const [allPublishedProjects, allPublishedTechs, projTechRows, projLinkRows, projMediaRows, mediaRows] =
-    await Promise.all([
-      db
-        .select()
-        .from(schema.projects)
-        .where(publishedOnly(schema.projects))
-        .orderBy(asc(schema.projects.sortOrder)),
-      db.select().from(schema.technologies).where(publishedOnly(schema.technologies)),
-      db.select().from(schema.projectTechnologies),
-      db.select().from(schema.projectLinks),
-      db.select().from(schema.projectMedia),
-      db.select().from(schema.media).where(isNull(schema.media.deletedAt)),
-    ]);
+  const [allPublishedProjects, allPublishedTechs] = await Promise.all([
+    db
+      .select()
+      .from(schema.projects)
+      .where(publishedOnly(schema.projects))
+      .orderBy(asc(schema.projects.sortOrder)),
+    db.select().from(schema.technologies).where(publishedOnly(schema.technologies)),
+  ]);
 
   const techMap = new Map<string, TechnologyRow>();
   let filterTechId: string | null = null;
@@ -58,14 +63,36 @@ export async function listProjects(db: DbClient, options: ListProjectsOptions) {
         meta: { page, limit, total: 0 },
       };
     }
+    const techLinks = await db
+      .select()
+      .from(schema.projectTechnologies)
+      .where(eq(schema.projectTechnologies.technologyId, filterTechId));
     const matchingProjectIds = new Set(
-      projTechRows.filter((pt) => pt.technologyId === filterTechId).map((pt) => pt.projectId),
+      techLinks.filter((pt) => pt.technologyId === filterTechId).map((pt) => pt.projectId),
     );
     filtered = filtered.filter((p) => matchingProjectIds.has(p.id));
   }
 
   const total = filtered.length;
   const pagedProjects = filtered.slice(offset, offset + limit);
+  if (pagedProjects.length === 0) {
+    return { items: [], meta: { page, limit, total } };
+  }
+
+  // Load relations only for the projects on this page.
+  const pageIds = pagedProjects.map((p) => p.id);
+  const [projTechRows, projLinkRows, projMediaRows] = await Promise.all([
+    db.select().from(schema.projectTechnologies).where(inArray(schema.projectTechnologies.projectId, pageIds)),
+    db.select().from(schema.projectLinks).where(inArray(schema.projectLinks.projectId, pageIds)),
+    db
+      .select()
+      .from(schema.projectMedia)
+      .where(and(inArray(schema.projectMedia.projectId, pageIds), eq(schema.projectMedia.role, 'clip'))),
+  ]);
+  const mediaRows = await loadMedia(db, [
+    ...pagedProjects.map((p) => p.coverMediaId),
+    ...projMediaRows.map((pm) => pm.mediaId),
+  ]);
 
   const mediaMap = new Map<string, MediaRow>();
   for (const m of mediaRows) {
@@ -111,7 +138,7 @@ export async function getProjectBySlug(db: DbClient, slug: string, locale: Suppo
   const prevRow = index > 0 ? allPublished[index - 1] : null;
   const nextRow = index < allPublished.length - 1 ? allPublished[index + 1] : null;
 
-  const [projTechRows, projLinkRows, projMediaRows, techRows, mediaRows] = await Promise.all([
+  const [projTechRows, projLinkRows, projMediaRows, techRows] = await Promise.all([
     db
       .select()
       .from(schema.projectTechnologies)
@@ -119,7 +146,11 @@ export async function getProjectBySlug(db: DbClient, slug: string, locale: Suppo
     db.select().from(schema.projectLinks).where(eq(schema.projectLinks.projectId, project.id)),
     db.select().from(schema.projectMedia).where(eq(schema.projectMedia.projectId, project.id)),
     db.select().from(schema.technologies).where(publishedOnly(schema.technologies)),
-    db.select().from(schema.media).where(isNull(schema.media.deletedAt)),
+  ]);
+  const mediaRows = await loadMedia(db, [
+    project.coverMediaId,
+    project.architectureMediaId,
+    ...projMediaRows.map((pm) => pm.mediaId),
   ]);
 
   const techMap = new Map<string, TechnologyRow>();

@@ -1,11 +1,17 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { and, eq } from 'drizzle-orm';
 import { getDb } from '../db/client';
-import { documents, events, exportPresets, media, shareLinks } from '../db/schema';
 import { AppError } from '../lib/errors';
 import { getHashSalt, visitorHash } from '../lib/hash';
 import { parseLocale } from '../lib/locale';
 import { ok } from '../lib/response';
+import {
+  getActiveDocument,
+  getDocumentWithMedia,
+  getPresetById,
+  getPresetBySlug,
+  getShareLinkByToken,
+  recordShareOpen,
+} from '../services/document.service';
 import { buildExport, buildJsonResume, type ExportPresetRow } from '../services/export.service';
 import type { AppBindings } from '../types/env';
 
@@ -18,21 +24,11 @@ documentsExportRoute.get('/v1/documents/cv', async (c) => {
     typeParam === 'portfolio_pdf' || typeParam === 'other' ? typeParam : 'cv';
 
 
-  const db = getDb(c.env);
-  const rows = await db
-    .select()
-    .from(documents)
-    .where(and(eq(documents.type, docType), eq(documents.locale, locale), eq(documents.isActive, true)));
-
-  const doc = rows.find(
-    (r) => r.type === docType && r.locale === locale && r.isActive === true
-  );
-  if (!doc) {
+  const found = await getActiveDocument(getDb(c.env), docType, locale);
+  if (!found) {
     throw new AppError(404, 'NOT_FOUND', `No active ${docType} document found for locale ${locale}`);
   }
-
-  const mediaRows = await db.select().from(media).where(eq(media.id, doc.mediaId));
-  const asset = mediaRows.find((m) => m.id === doc.mediaId) ?? null;
+  const { doc, asset } = found;
 
   return ok(c, {
     ...doc,
@@ -53,11 +49,7 @@ documentsExportRoute.get('/v1/export/:presetSlug', async (c) => {
   const localeOverride = c.req.query('locale') as 'en' | 'id' | undefined;
   const db = getDb(c.env);
 
-  const rows = await db
-    .select()
-    .from(exportPresets)
-    .where(eq(exportPresets.slug, slug));
-  const preset = rows.find((p) => p.slug === slug);
+  const preset = await getPresetBySlug(db, slug);
 
   if (!preset || !preset.isPublic) {
     throw new AppError(404, 'NOT_FOUND', `Public export preset "${slug}" not found.`);
@@ -71,8 +63,7 @@ documentsExportRoute.get('/v1/share/:token', async (c) => {
   const token = c.req.param('token');
   const db = getDb(c.env);
 
-  const rows = await db.select().from(shareLinks).where(eq(shareLinks.token, token));
-  const link = rows.find((l) => l.token === token);
+  const link = await getShareLinkByToken(db, token);
 
   if (!link) {
     throw new AppError(404, 'NOT_FOUND', 'Share link not found.');
@@ -89,52 +80,25 @@ documentsExportRoute.get('/v1/share/:token', async (c) => {
     throw new AppError(410, 'SHARE_LINK_EXPIRED', 'This share link has expired or been deactivated.');
   }
 
-  // Increment viewCount & lastOpenedAt
-  await db
-    .update(shareLinks)
-    .set({
-      viewCount: (link.viewCount ?? 0) + 1,
-      lastOpenedAt: now,
-      updatedAt: now,
-    })
-    .where(eq(shareLinks.id, link.id));
-
-  // Record share_open event
   const rawIp =
     c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? '127.0.0.1';
   const ua = c.req.header('user-agent') ?? '';
-  const utcDate = now.toISOString().slice(0, 10);
-  const vHash = await visitorHash(rawIp, ua, utcDate, getHashSalt(c.env));
-
-  await db.insert(events).values({
-    type: 'share_open',
-    path: `/s/${token}`,
-    shareLinkId: link.id,
-    visitorHash: vHash,
-  });
+  const vHash = await visitorHash(rawIp, ua, now.toISOString().slice(0, 10), getHashSalt(c.env));
+  await recordShareOpen(db, link.id, token, vHash);
 
   if (link.documentId) {
-    const docRows = await db.select().from(documents).where(eq(documents.id, link.documentId));
-    const doc = docRows.find((d) => d.id === link.documentId) ?? null;
-    const mediaRows = doc
-      ? await db.select().from(media).where(eq(media.id, doc.mediaId))
-      : [];
-    const asset = doc ? (mediaRows.find((m) => m.id === doc.mediaId) ?? null) : null;
+    const document = await getDocumentWithMedia(db, link.documentId);
 
     return ok(c, {
       kind: 'document',
       label: link.label,
       expiresAt: link.expiresAt,
-      document: doc ? { ...doc, media: asset } : null,
+      document,
     });
   }
 
   if (link.presetId) {
-    const presetRows = await db
-      .select()
-      .from(exportPresets)
-      .where(eq(exportPresets.id, link.presetId));
-    const preset = presetRows.find((p) => p.id === link.presetId);
+    const preset = await getPresetById(db, link.presetId);
     if (!preset) {
       throw new AppError(404, 'NOT_FOUND', 'Export preset for share link not found.');
     }

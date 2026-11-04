@@ -1,33 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../db/client';
-import {
-  profile,
-  siteSettings,
-  technologies,
-  projects,
-  projectTechnologies,
-  projectLinks,
-  projectMedia,
-  experiences,
-  experienceTechnologies,
-  education,
-  certifications,
-  activities,
-  achievements,
-  publications,
-  testimonials,
-  documents,
-  exportPresets,
-  media,
-  auditLogs,
-} from '../../db/schema';
 import { AppError } from '../../lib/errors';
 import { revalidate } from '../../lib/revalidate';
 import { ok } from '../../lib/response';
 import { requireRole } from '../../middleware/require-role';
 import { writeAuditLog } from '../../services/content.service';
+import { exportBackup, importBackup, listAuditLogs } from '../../services/system.service';
 import type { AppBindings } from '../../types/env';
 
 const backupBundleSchema = z.object({
@@ -58,33 +37,7 @@ const backupBundleSchema = z.object({
 const adminSystem = new OpenAPIHono<AppBindings>();
 
 adminSystem.get('/v1/admin/backup/export', requireRole('owner'), async (c) => {
-  const db = getDb(c.env);
-  const bundle = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    tables: {
-      profile: await db.select().from(profile),
-      siteSettings: await db.select().from(siteSettings),
-      media: await db.select().from(media),
-      technologies: await db.select().from(technologies),
-      projects: await db.select().from(projects),
-      projectTechnologies: await db.select().from(projectTechnologies),
-      projectLinks: await db.select().from(projectLinks),
-      projectMedia: await db.select().from(projectMedia),
-      experiences: await db.select().from(experiences),
-      experienceTechnologies: await db.select().from(experienceTechnologies),
-      education: await db.select().from(education),
-      certifications: await db.select().from(certifications),
-      activities: await db.select().from(activities),
-      achievements: await db.select().from(achievements),
-      publications: await db.select().from(publications),
-      testimonials: await db.select().from(testimonials),
-      documents: await db.select().from(documents),
-      exportPresets: await db.select().from(exportPresets),
-    },
-  };
-
-  return ok(c, bundle);
+  return ok(c, await exportBackup(getDb(c.env)));
 });
 
 adminSystem.post('/v1/admin/backup/import', requireRole('owner'), async (c) => {
@@ -112,15 +65,7 @@ adminSystem.post('/v1/admin/backup/import', requireRole('owner'), async (c) => {
 
   const db = getDb(c.env);
   const user = c.get('user')!;
-
-  if (tables.technologies && tables.technologies.length > 0) {
-    await db
-      .insert(technologies)
-      .values(tables.technologies as (typeof technologies.$inferInsert)[]);
-  }
-  if (tables.projects && tables.projects.length > 0) {
-    await db.insert(projects).values(tables.projects as (typeof projects.$inferInsert)[]);
-  }
+  const imported = await importBackup(db, tables);
 
   await writeAuditLog(db, {
     userId: user.id,
@@ -130,24 +75,16 @@ adminSystem.post('/v1/admin/backup/import', requireRole('owner'), async (c) => {
   });
 
   await revalidate(c.env, ['site', 'projects', 'certifications', 'documents']);
-  return ok(c, { dryRun: false, imported: true, counts });
+  // `counts` = rows found in the bundle; `imported` = rows actually restored.
+  return ok(c, { dryRun: false, imported: true, counts, restored: imported });
 });
 
 adminSystem.get('/v1/admin/audit-logs', requireRole('owner'), async (c) => {
-  const page = Math.max(1, Number(c.req.query('page') ?? 1));
-  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50)));
-  const offset = (page - 1) * limit;
-
-  const db = getDb(c.env);
-  const rows = await db
-    .select()
-    .from(auditLogs)
-    .orderBy(desc(auditLogs.createdAt))
-    .limit(limit)
-    .offset(offset);
-
-  return ok(c, rows, { page, limit, total: rows.length });
+  const { rows, meta } = await listAuditLogs(getDb(c.env), {
+    page: Number(c.req.query('page') ?? 1),
+    limit: Number(c.req.query('limit') ?? 50),
+  });
+  return ok(c, rows, meta);
 });
 
 export default adminSystem;
-

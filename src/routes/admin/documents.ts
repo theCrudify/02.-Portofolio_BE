@@ -1,13 +1,25 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../db/client';
-import { documents, exportPresets, shareLinks } from '../../db/schema';
 import { AppError } from '../../lib/errors';
 import { revalidate } from '../../lib/revalidate';
 import { ok } from '../../lib/response';
 import { requireRole } from '../../middleware/require-role';
 import { writeAuditLog } from '../../services/content.service';
+import {
+  activateDocument,
+  createDocument,
+  createExportPreset,
+  createShareLink,
+  deleteDocument,
+  deleteExportPreset,
+  deleteShareLink,
+  listDocuments,
+  listExportPresets,
+  listShareLinks,
+  updateExportPreset,
+  updateShareLink,
+} from '../../services/document.service';
 import type { AppBindings } from '../../types/env';
 
 const createDocumentSchema = z.object({
@@ -63,45 +75,28 @@ const updateShareLinkSchema = z.object({
   expiresAt: z.string().datetime().optional().nullable(),
 });
 
-export function generateShareToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  let binary = '';
-  for (const b of bytes) {
-    binary += String.fromCharCode(b);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 const adminDocuments = new OpenAPIHono<AppBindings>();
 
+const notFound = (what: string) => new AppError(404, 'NOT_FOUND', `${what} not found`);
+
 adminDocuments.get('/v1/admin/documents', requireRole('owner', 'editor'), async (c) => {
-  const db = getDb(c.env);
-  const rows = await db.select().from(documents).orderBy(desc(documents.createdAt));
-  return ok(c, rows);
+  return ok(c, await listDocuments(getDb(c.env)));
 });
 
 adminDocuments.post('/v1/admin/documents', requireRole('owner', 'editor'), async (c) => {
-  const body = await c.req.json();
-  const parsed = createDocumentSchema.safeParse(body);
+  const parsed = createDocumentSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid document payload');
   }
   const db = getDb(c.env);
   const user = c.get('user')!;
-  const [created] = await db
-    .insert(documents)
-    .values({
-      ...parsed.data,
-      isActive: false,
-    })
-    .returning();
+  const created = await createDocument(db, parsed.data);
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'create',
     resource: 'documents',
-    resourceId: created!.id,
+    resourceId: created.id,
     summary: `Registered ${parsed.data.type} (${parsed.data.locale})`,
   });
 
@@ -113,41 +108,28 @@ adminDocuments.post('/v1/admin/documents/:id/activate', requireRole('owner'), as
   const db = getDb(c.env);
   const user = c.get('user')!;
 
-  const allDocs = await db.select().from(documents);
-  const target = allDocs.find((d) => d.id === id);
-  if (!target) {
-    throw new AppError(404, 'NOT_FOUND', 'Document not found');
-  }
-
-  // Deactivate previous active document of same type + locale
-  await db
-    .update(documents)
-    .set({ isActive: false, updatedAt: new Date() })
-    .where(and(eq(documents.type, target.type), eq(documents.locale, target.locale)));
-
-  const [activated] = await db
-    .update(documents)
-    .set({ isActive: true, updatedAt: new Date() })
-    .where(eq(documents.id, id))
-    .returning();
+  const result = await activateDocument(db, id);
+  if (!result) throw notFound('Document');
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'update',
     resource: 'documents',
     resourceId: id,
-    summary: `Activated ${target.type} (${target.locale})`,
+    summary: `Activated ${result.target.type} (${result.target.locale})`,
   });
 
   await revalidate(c.env, ['site', 'documents']);
-  return ok(c, activated);
+  return ok(c, result.activated);
 });
 
 adminDocuments.delete('/v1/admin/documents/:id', requireRole('owner'), async (c) => {
   const id = c.req.param('id');
   const db = getDb(c.env);
   const user = c.get('user')!;
-  await db.delete(documents).where(eq(documents.id, id));
+  const deleted = await deleteDocument(db, id);
+  if (!deleted) throw notFound('Document');
+
   await writeAuditLog(db, {
     userId: user.id,
     action: 'delete',
@@ -155,36 +137,32 @@ adminDocuments.delete('/v1/admin/documents/:id', requireRole('owner'), async (c)
     resourceId: id,
     summary: 'Deleted document record',
   });
+  // Deleting the active CV changes the public download button.
+  if (deleted.isActive) await revalidate(c.env, ['site', 'documents']);
   return c.body(null, 204);
 });
 
 adminDocuments.get('/v1/admin/export-presets', requireRole('owner', 'editor'), async (c) => {
-  const db = getDb(c.env);
-  const rows = await db.select().from(exportPresets).orderBy(desc(exportPresets.createdAt));
-  return ok(c, rows);
+  return ok(c, await listExportPresets(getDb(c.env)));
 });
 
 adminDocuments.post('/v1/admin/export-presets', requireRole('owner'), async (c) => {
-  const body = await c.req.json();
-  const parsed = presetSchema.safeParse(body);
+  const parsed = presetSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid export preset payload');
   }
   const db = getDb(c.env);
   const user = c.get('user')!;
-  const [created] = await db
-    .insert(exportPresets)
-    .values({
-      ...parsed.data,
-      itemFilter: parsed.data.itemFilter ?? {},
-    })
-    .returning();
+  const created = await createExportPreset(db, {
+    ...parsed.data,
+    itemFilter: parsed.data.itemFilter ?? {},
+  });
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'create',
     resource: 'export_presets',
-    resourceId: created!.id,
+    resourceId: created.id,
     summary: `Created export preset ${parsed.data.slug}`,
   });
 
@@ -193,22 +171,17 @@ adminDocuments.post('/v1/admin/export-presets', requireRole('owner'), async (c) 
 
 adminDocuments.put('/v1/admin/export-presets/:id', requireRole('owner'), async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
-  const parsed = presetSchema.safeParse(body);
+  const parsed = presetSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid export preset payload');
   }
   const db = getDb(c.env);
   const user = c.get('user')!;
-  const [updated] = await db
-    .update(exportPresets)
-    .set({
-      ...parsed.data,
-      itemFilter: parsed.data.itemFilter ?? {},
-      updatedAt: new Date(),
-    })
-    .where(eq(exportPresets.id, id))
-    .returning();
+  const updated = await updateExportPreset(db, id, {
+    ...parsed.data,
+    itemFilter: parsed.data.itemFilter ?? {},
+  });
+  if (!updated) throw notFound('Export preset');
 
   await writeAuditLog(db, {
     userId: user.id,
@@ -225,7 +198,8 @@ adminDocuments.delete('/v1/admin/export-presets/:id', requireRole('owner'), asyn
   const id = c.req.param('id');
   const db = getDb(c.env);
   const user = c.get('user')!;
-  await db.delete(exportPresets).where(eq(exportPresets.id, id));
+  if (!(await deleteExportPreset(db, id))) throw notFound('Export preset');
+
   await writeAuditLog(db, {
     userId: user.id,
     action: 'delete',
@@ -237,40 +211,29 @@ adminDocuments.delete('/v1/admin/export-presets/:id', requireRole('owner'), asyn
 });
 
 adminDocuments.get('/v1/admin/share-links', requireRole('owner', 'editor'), async (c) => {
-  const db = getDb(c.env);
-  const rows = await db.select().from(shareLinks).orderBy(desc(shareLinks.createdAt));
-  return ok(c, rows);
+  return ok(c, await listShareLinks(getDb(c.env)));
 });
 
 adminDocuments.post('/v1/admin/share-links', requireRole('owner', 'editor'), async (c) => {
-  const body = await c.req.json();
-  const parsed = createShareLinkSchema.safeParse(body);
+  const parsed = createShareLinkSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid share link payload');
   }
   const db = getDb(c.env);
   const user = c.get('user')!;
-  const token = generateShareToken();
-
-  const [created] = await db
-    .insert(shareLinks)
-    .values({
-      token,
-      label: parsed.data.label,
-      documentId: parsed.data.documentId ?? null,
-      presetId: parsed.data.presetId ?? null,
-      expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
-      isActive: true,
-      viewCount: 0,
-      createdBy: user.id,
-    })
-    .returning();
+  const created = await createShareLink(db, {
+    label: parsed.data.label,
+    documentId: parsed.data.documentId ?? null,
+    presetId: parsed.data.presetId ?? null,
+    expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
+    createdBy: user.id,
+  });
 
   await writeAuditLog(db, {
     userId: user.id,
     action: 'create',
     resource: 'share_links',
-    resourceId: created!.id,
+    resourceId: created.id,
     summary: `Created share link "${parsed.data.label}"`,
   });
 
@@ -279,24 +242,27 @@ adminDocuments.post('/v1/admin/share-links', requireRole('owner', 'editor'), asy
 
 adminDocuments.patch('/v1/admin/share-links/:id', requireRole('owner', 'editor'), async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
-  const parsed = updateShareLinkSchema.safeParse(body);
+  const parsed = updateShareLinkSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid share link update payload');
   }
+  const { label, isActive, expiresAt } = parsed.data;
   const db = getDb(c.env);
-  const [updated] = await db
-    .update(shareLinks)
-    .set({
-      ...(parsed.data.label !== undefined ? { label: parsed.data.label } : {}),
-      ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
-      ...(parsed.data.expiresAt !== undefined
-        ? { expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(shareLinks.id, id))
-    .returning();
+  const user = c.get('user')!;
+  const updated = await updateShareLink(db, id, {
+    ...(label !== undefined ? { label } : {}),
+    ...(isActive !== undefined ? { isActive } : {}),
+    ...(expiresAt !== undefined ? { expiresAt: expiresAt ? new Date(expiresAt) : null } : {}),
+  });
+  if (!updated) throw notFound('Share link');
+
+  await writeAuditLog(db, {
+    userId: user.id,
+    action: 'update',
+    resource: 'share_links',
+    resourceId: id,
+    summary: `Updated share link "${updated.label}"`,
+  });
 
   return ok(c, updated);
 });
@@ -304,7 +270,16 @@ adminDocuments.patch('/v1/admin/share-links/:id', requireRole('owner', 'editor')
 adminDocuments.delete('/v1/admin/share-links/:id', requireRole('owner'), async (c) => {
   const id = c.req.param('id');
   const db = getDb(c.env);
-  await db.delete(shareLinks).where(eq(shareLinks.id, id));
+  const user = c.get('user')!;
+  if (!(await deleteShareLink(db, id))) throw notFound('Share link');
+
+  await writeAuditLog(db, {
+    userId: user.id,
+    action: 'delete',
+    resource: 'share_links',
+    resourceId: id,
+    summary: 'Deleted share link',
+  });
   return c.body(null, 204);
 });
 

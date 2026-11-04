@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import type { Database } from '../db/client';
+import { paginate, type PaginateInput } from '../db/queries/common';
 import { dailyStats, events, githubCache, loginAttempts, messages, shareLinks } from '../db/schema';
 import { revalidate } from '../lib/revalidate';
 import type { Env } from '../types/env';
@@ -202,8 +203,22 @@ export async function getAdminAnalytics(db: Database, range: '7d' | '30d' | '90d
   };
 }
 
-export async function listAdminMessages(db: Database) {
-  return db.select().from(messages).orderBy(desc(messages.createdAt));
+export async function recordEvent(db: Database, values: typeof events.$inferInsert) {
+  await db.insert(events).values(values);
+}
+
+export async function saveContactMessage(db: Database, values: typeof messages.$inferInsert) {
+  const [saved] = await db.insert(messages).values(values).returning();
+  return saved;
+}
+
+export async function listAdminMessages(db: Database, query: PaginateInput = {}) {
+  const { page, limit, offset } = paginate({ page: query.page, limit: query.limit ?? 50 });
+  const [rows, total] = await Promise.all([
+    db.select().from(messages).orderBy(desc(messages.createdAt)).limit(limit).offset(offset),
+    db.$count(messages),
+  ]);
+  return { rows, meta: { page, limit, total } };
 }
 
 export async function updateAdminMessage(

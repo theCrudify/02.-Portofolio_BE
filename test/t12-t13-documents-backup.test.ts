@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getTableName } from 'drizzle-orm';
+import { getTableColumns, getTableName, type SQL } from 'drizzle-orm';
+import { PgDialect, type PgTable } from 'drizzle-orm/pg-core';
 import { uuidv7 } from 'uuidv7';
 import { app } from '@/index';
 import { setTestDb, type DbClient } from '@/db/client';
 import { signSession } from '@/lib/jwt';
-import { generateShareToken } from '@/routes/admin/documents';
+import { generateShareToken } from '@/services/document.service';
 
 interface DocStore {
   users: Record<string, unknown>[];
@@ -24,10 +25,26 @@ interface DocStore {
   [key: string]: Record<string, unknown>[];
 }
 
+const dialect = new PgDialect();
+
+// Applies simple `col = value [and ...]` conditions so lookups by id/slug/token behave like Postgres.
+function applyWhere(table: PgTable, rows: Record<string, unknown>[], cond?: SQL) {
+  if (!cond) return rows;
+  const { sql, params } = dialect.sqlToQuery(cond);
+  const byColumn = Object.fromEntries(
+    Object.entries(getTableColumns(table)).map(([key, col]) => [col.name, key]),
+  );
+  const checks = [...sql.matchAll(/"(\w+)" = \$(\d+)/g)].map(([, column, n]) => ({
+    key: byColumn[column!]!,
+    value: params[Number(n) - 1],
+  }));
+  return rows.filter((r) => checks.every(({ key, value }) => r[key] === value));
+}
+
 function createDocMockDb(store: DocStore): DbClient {
-  const buildChain = (rows: Record<string, unknown>[]) => {
+  const buildChain = (rows: Record<string, unknown>[], table?: PgTable) => {
     const chain: Record<string, unknown> = {
-      where: () => buildChain(rows),
+      where: (cond?: SQL) => buildChain(table ? applyWhere(table, rows, cond) : rows),
       orderBy: () => buildChain(rows),
       limit: (n: number) => buildChain(rows.slice(0, n)),
       offset: (o: number) => buildChain(rows.slice(o)),
@@ -40,10 +57,11 @@ function createDocMockDb(store: DocStore): DbClient {
   };
 
   return {
+    batch: (queries: unknown[]) => Promise.all(queries),
     select: () => ({
       from: (table: unknown) => {
         const name = getTableName(table as Parameters<typeof getTableName>[0]);
-        return buildChain(store[name] ?? []);
+        return buildChain(store[name] ?? [], table as PgTable);
       },
     }),
     insert: (table: unknown) => ({
@@ -68,26 +86,25 @@ function createDocMockDb(store: DocStore): DbClient {
     }),
     update: (table: unknown) => ({
       set: (patch: Record<string, unknown>) => ({
-        where: () => {
+        where: (cond?: SQL) => {
           const name = getTableName(table as Parameters<typeof getTableName>[0]);
-          const rows = store[name] ?? [];
-          if (patch.isActive === false) {
-            for (const r of rows) r.isActive = false;
-          } else {
-            const target = rows[rows.length - 1];
-            if (target) Object.assign(target, patch);
-          }
-          return Object.assign(Promise.resolve([rows[rows.length - 1]]), {
-            returning: () => Promise.resolve([rows[rows.length - 1]]),
+          const matched = applyWhere(table as PgTable, store[name] ?? [], cond);
+          for (const r of matched) Object.assign(r, patch);
+          return Object.assign(Promise.resolve(matched), {
+            returning: () => Promise.resolve(matched),
           });
         },
       }),
     }),
     delete: (table: unknown) => ({
-      where: () => {
+      where: (cond?: SQL) => {
         const name = getTableName(table as Parameters<typeof getTableName>[0]);
-        store[name] = [];
-        return Promise.resolve();
+        const rows = store[name] ?? [];
+        const matched = applyWhere(table as PgTable, rows, cond);
+        store[name] = rows.filter((r) => !matched.includes(r));
+        return Object.assign(Promise.resolve(matched), {
+          returning: () => Promise.resolve(matched),
+        });
       },
     }),
   } as unknown as DbClient;
@@ -285,6 +302,27 @@ describe('T12 & T13 · Documents, Export Presets, Share Links (410 Expired), JSO
     expect(expShare.status).toBe(410);
     const expBody = (await expShare.json()) as { error: { code: string } };
     expect(expBody.error.code).toBe('SHARE_LINK_EXPIRED');
+  });
+
+  it('returns 404 when updating a share link or export preset that does not exist', async () => {
+    const missing = '01950000-0000-7000-8000-00000000dead';
+    const headers = { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', Cookie: ownerCookie };
+    const link = await app.request(
+      `/v1/admin/share-links/${missing}`,
+      { method: 'PATCH', headers, body: JSON.stringify({ label: 'x' }) },
+      env
+    );
+    expect(link.status).toBe(404);
+    const preset = await app.request(
+      `/v1/admin/export-presets/${missing}`,
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ slug: 'x', name: 'X', sections: [{ key: 'projects' }] }),
+      },
+      env
+    );
+    expect(preset.status).toBe(404);
   });
 
   it('exports JSON backup bundle and supports dryRun=true import without mutating DB', async () => {

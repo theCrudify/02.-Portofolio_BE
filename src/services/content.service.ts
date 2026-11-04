@@ -83,17 +83,20 @@ export async function listResource(
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-  const rows = (await db
-    .select()
-    .from(config.table)
-    .where(whereClause)
-    .orderBy(asc(config.table.sortOrder), desc(config.table.createdAt))
-    .limit(limit)
-    .offset(offset)) as Record<string, unknown>[];
+  const [rows, total] = await Promise.all([
+    db
+      .select()
+      .from(config.table)
+      .where(whereClause)
+      .orderBy(asc(config.table.sortOrder), desc(config.table.createdAt))
+      .limit(limit)
+      .offset(offset) as Promise<Record<string, unknown>[]>,
+    db.$count(config.table, whereClause),
+  ]);
 
   return {
     data: rows,
-    meta: { page, limit, total: rows.length },
+    meta: { page, limit, total },
   };
 }
 
