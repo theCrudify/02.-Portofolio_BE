@@ -1198,8 +1198,15 @@ INSERT INTO lookups (id, group_id, code, label_en, label_id, icon, color, is_sys
   ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'x', 'X', 'X', 'x', NULL, false, 2),
   ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'instagram', 'Instagram', 'Instagram', 'instagram', NULL, false, 3),
   ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'youtube', 'YouTube', 'YouTube', 'youtube', NULL, false, 4),
-  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'medium', 'Medium', 'Medium', 'medium', NULL, false, 5),
-  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'website', 'Website', 'Situs web', 'globe', NULL, false, 6)
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'whatsapp', 'WhatsApp', 'WhatsApp', 'whatsapp', NULL, false, 5),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'telegram', 'Telegram', 'Telegram', 'telegram', NULL, false, 6),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'discord', 'Discord', 'Discord', 'discord', NULL, false, 7),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'gitlab', 'GitLab', 'GitLab', 'gitlab', NULL, false, 8),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'threads', 'Threads', 'Threads', 'threads', NULL, false, 9),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'facebook', 'Facebook', 'Facebook', 'facebook', NULL, false, 10),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'tiktok', 'TikTok', 'TikTok', 'tiktok', NULL, false, 11),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'medium', 'Medium', 'Medium', 'medium', NULL, false, 12),
+  ((SELECT id FROM lookup_groups WHERE code = 'social_platform'), 'website', 'Website', 'Situs web', 'globe', NULL, false, 13)
 ) AS v(group_id, code, label_en, label_id, icon, color, is_system, sort_order);
 --> statement-breakpoint
 INSERT INTO lookup_groups (id, code, name_en, name_id, is_system) VALUES (gen_random_uuid(), 'language_level', 'Language level', 'Tingkat bahasa', false);
