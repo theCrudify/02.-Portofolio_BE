@@ -16,6 +16,8 @@ export interface Bindings {
   FRONTEND_URL: string;
   REVALIDATE_SECRET: string;
   INTERNAL_API_SECRET?: string;
+  /** Workers Rate Limiting binding (wrangler.toml); absent in tests and local dev. */
+  RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
   TURNSTILE_SECRET: string;
   CLOUDINARY_CLOUD_NAME: string;
   CLOUDINARY_API_KEY: string;
@@ -39,4 +41,3 @@ export interface AppEnv {
 
 export type Env = Bindings;
 export type AppBindings = AppEnv;
-

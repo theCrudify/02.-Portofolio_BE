@@ -1,3 +1,4 @@
+import { clientIp } from '@/lib/client-ip';
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { BaseController } from '@/core/base';
@@ -18,8 +19,7 @@ export class RecordEventController extends BaseController {
       return this.noContent(c);
     }
 
-    const rawIp =
-      c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? '127.0.0.1';
+    const rawIp = clientIp(c);
     const hashedIp = await ipHash(rawIp, getHashSalt(c.env));
 
     if (!memoryRateLimit(`events:${hashedIp}`, 60, 60_000).allowed) {

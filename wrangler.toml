@@ -9,3 +9,11 @@ mode = "smart"
 
 [triggers]
 crons = ["10 0 * * *"]
+
+# Per-visitor limit for /v1/* (Workers Rate Limiting, free plan). namespace_id is any
+# account-unique integer string.
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }

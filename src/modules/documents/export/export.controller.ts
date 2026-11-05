@@ -1,3 +1,4 @@
+import { clientIp } from '@/lib/client-ip';
 import type { Context } from 'hono';
 import { BaseController } from '@/core/base';
 import { parseLocale } from '@/lib/locale';
@@ -35,8 +36,7 @@ export class ExportDocumentsController extends BaseController {
 
   handleShareToken = async (c: Context) => {
     const token = c.req.param('token')!;
-    const rawIp =
-      c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? '127.0.0.1';
+    const rawIp = clientIp(c);
     const ua = c.req.header('user-agent') ?? '';
     const service = new ExportDocumentsService(this.getDb(c));
     const payload = await service.resolveShareToken(token, rawIp, ua, c.env);

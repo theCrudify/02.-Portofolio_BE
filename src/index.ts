@@ -6,6 +6,7 @@ import { bodyLimitMiddleware } from '@/middleware/body-limit';
 import { csrfMiddleware } from '@/middleware/csrf';
 import { errorHandler, notFoundHandler } from '@/middleware/error';
 import { internalGuardMiddleware } from '@/middleware/internal-guard';
+import { publicRateLimitMiddleware } from '@/middleware/rate-limit';
 import { requestIdMiddleware } from '@/middleware/request-id';
 import adminAnalytics from '@/routes/admin/analytics';
 import adminDocuments from '@/routes/admin/documents';
@@ -72,6 +73,9 @@ export function createApp(): OpenAPIHono<AppEnv> {
   // 6. Internal Service Guard (Shared Secret / PSK) on /v1/*
   app.use('/v1/*', internalGuardMiddleware);
 
+  // 7. Per-visitor rate limit on /v1/*
+  app.use('/v1/*', publicRateLimitMiddleware);
+
   // Error & 404 handlers
   app.onError(errorHandler);
   app.notFound(notFoundHandler);
@@ -90,7 +94,6 @@ export function createApp(): OpenAPIHono<AppEnv> {
   app.route('/', adminSystem);
   app.route('/', adminResources);
   registerDocsRoutes(app);
-
 
   return app;
 }

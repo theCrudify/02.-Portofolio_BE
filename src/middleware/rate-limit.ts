@@ -1,3 +1,6 @@
+import { createMiddleware } from 'hono/factory';
+import { fail } from '@/lib/response';
+import type { AppEnv } from '@/types/env';
 import { and, eq, gte } from 'drizzle-orm';
 import type { DbClient } from '@/db/client';
 import * as schema from '@/db/schema';
@@ -63,3 +66,20 @@ export function clearMemoryRateLimits(): void {
   memoryBuckets.clear();
 }
 
+/**
+ * Per-visitor limit on /v1/* via the Workers Rate Limiting binding (shared across
+ * isolates, free plan). Only proxied browser requests carry x-client-ip; SSR fetches
+ * from our own server don't and are not limited (Next's data cache absorbs page floods).
+ */
+export const publicRateLimitMiddleware = createMiddleware<AppEnv>(async (c, next) => {
+  const limiter = c.env?.RATE_LIMITER;
+  const visitor = c.env?.INTERNAL_API_SECRET ? c.req.header('x-client-ip') : undefined;
+  if (limiter && visitor) {
+    const { success } = await limiter.limit({ key: visitor });
+    if (!success) {
+      c.header('Retry-After', '60');
+      return fail(c, 429, 'RATE_LIMITED', 'Too many requests');
+    }
+  }
+  await next();
+});

@@ -1,3 +1,4 @@
+import { clientIp } from '@/lib/client-ip';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import { BaseController } from '@/core/base';
@@ -16,10 +17,10 @@ const FIVE_MINUTES_SEC = 5 * 60;
 export class LoginController extends BaseController {
   async handle(c: Context<AppEnv>, body: LoginBodyDto) {
     const db = this.db(c);
-    const clientIp = c.req.header('cf-connecting-ip') || '127.0.0.1';
+    const ip = clientIp(c);
     const salt = getHashSalt(c.env);
     const jwtSecret = getJwtSecret(c.env);
-    const hashedIp = await ipHash(clientIp, salt);
+    const hashedIp = await ipHash(ip, salt);
 
     const service = new LoginService(new LoginRepository(db));
 
@@ -68,4 +69,3 @@ export class LoginController extends BaseController {
     }
   }
 }
-
