@@ -15,6 +15,7 @@ export interface Bindings {
   HASH_SALT: string;
   FRONTEND_URL: string;
   REVALIDATE_SECRET: string;
+  INTERNAL_API_SECRET?: string;
   TURNSTILE_SECRET: string;
   CLOUDINARY_CLOUD_NAME: string;
   CLOUDINARY_API_KEY: string;

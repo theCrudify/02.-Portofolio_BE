@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { bodyLimitMiddleware } from '@/middleware/body-limit';
 import { csrfMiddleware } from '@/middleware/csrf';
 import { errorHandler, notFoundHandler } from '@/middleware/error';
+import { internalGuardMiddleware } from '@/middleware/internal-guard';
 import { requestIdMiddleware } from '@/middleware/request-id';
 import adminAnalytics from '@/routes/admin/analytics';
 import adminDocuments from '@/routes/admin/documents';
@@ -57,7 +58,7 @@ export function createApp(): OpenAPIHono<AppEnv> {
       origin: allowedOrigin,
       credentials: true,
       allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+      allowHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Internal-Secret'],
     });
     return corsMiddleware(c, next);
   });
@@ -67,6 +68,9 @@ export function createApp(): OpenAPIHono<AppEnv> {
 
   // 5. CSRF protection on /v1/admin/* and /v1/auth/*
   app.use('*', csrfMiddleware);
+
+  // 6. Internal Service Guard (Shared Secret / PSK) on /v1/*
+  app.use('/v1/*', internalGuardMiddleware);
 
   // Error & 404 handlers
   app.onError(errorHandler);
