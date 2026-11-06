@@ -175,6 +175,8 @@ export function serializeCollections(raw: RawSiteData, ctx: SerializeContext) {
             const p = projectMap.get(ep.projectId);
             return p ? [{ slug: p.slug, title: pickLocale(p, 'title', locale) ?? p.titleEn }] : [];
           }),
+        links: byParent(raw.expLinkRows, 'parentId', exp.id),
+        media: byParent(raw.expMediaRows, 'parentId', exp.id),
       }),
     ),
     education: raw.educationRows.map((edu) =>

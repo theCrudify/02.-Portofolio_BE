@@ -702,6 +702,10 @@ export const achievementTechnologies = techTable(
   () => achievements.id,
 );
 
+// Attachments (photos, documents) and links of a work experience.
+export const experienceLinks = linkTable('experience_links', 'experience_id', () => experiences.id);
+export const experienceMedia = mediaTable('experience_media', 'experience_id', () => experiences.id);
+
 export const publications = pgTable(
   'publications',
   {

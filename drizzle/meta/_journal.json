@@ -29,6 +29,13 @@
       "when": 1793834083545,
       "tag": "0003_achievement_extras",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793963105467,
+      "tag": "0004_experience_attachments",
+      "breakpoints": true
     }
   ]
 }

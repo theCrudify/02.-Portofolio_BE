@@ -30,6 +30,8 @@ export const BACKUP_TABLES = {
   experienceAchievements: schema.experienceAchievements,
   experienceProjects: schema.experienceProjects,
   experienceTechnologies: schema.experienceTechnologies,
+  experienceLinks: schema.experienceLinks,
+  experienceMedia: schema.experienceMedia,
   education: schema.education,
   educationActivities: schema.educationActivities,
   certifications: schema.certifications,

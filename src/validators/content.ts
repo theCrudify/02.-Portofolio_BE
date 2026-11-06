@@ -172,6 +172,8 @@ const experienceFields = {
   achievements: childSchemas.achievements.optional(),
   technologies: childSchemas.technologyIds.optional(),
   projects: childSchemas.projectIds.optional(),
+  links: childSchemas.links.optional(),
+  media: childSchemas.attachments.optional(),
 };
 export const experienceSchema = z.object(experienceFields);
 

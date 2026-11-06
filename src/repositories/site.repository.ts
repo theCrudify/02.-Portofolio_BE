@@ -37,6 +37,8 @@ export interface RawSiteData {
   expResponsibilityRows: Row<typeof schema.experienceResponsibilities>[];
   expAchievementRows: Row<typeof schema.experienceAchievements>[];
   expProjectRows: Row<typeof schema.experienceProjects>[];
+  expLinkRows: Row<typeof schema.experienceLinks>[];
+  expMediaRows: Row<typeof schema.experienceMedia>[];
   eduActivityRows: Row<typeof schema.educationActivities>[];
   certExtras: RawExtras;
   activityExtras: RawExtras;
@@ -117,6 +119,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       expResponsibilityRows,
       expAchievementRows,
       expProjectRows,
+      expLinkRows,
+      expMediaRows,
       eduActivityRows,
       certExtras,
       activityExtras,
@@ -157,6 +161,12 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       experienceIds.length
         ? db.select().from(schema.experienceProjects).where(inArray(schema.experienceProjects.experienceId, experienceIds))
         : none,
+      experienceIds.length
+        ? db.select().from(schema.experienceLinks).where(inArray(schema.experienceLinks.parentId, experienceIds))
+        : none,
+      experienceIds.length
+        ? db.select().from(schema.experienceMedia).where(inArray(schema.experienceMedia.parentId, experienceIds))
+        : none,
       educationIds.length
         ? db.select().from(schema.educationActivities).where(inArray(schema.educationActivities.educationId, educationIds))
         : none,
@@ -193,6 +203,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       expResponsibilityRows,
       expAchievementRows,
       expProjectRows,
+      expLinkRows,
+      expMediaRows,
       eduActivityRows,
       certExtras,
       activityExtras,

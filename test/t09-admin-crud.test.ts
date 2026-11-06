@@ -230,6 +230,48 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
     });
   });
 
+  it('saves photos, documents and links on a work experience and shows them in the site payload', async () => {
+    const orgId = await insertOrganization(db, { name: 'Acme Corp' });
+    const [photo, doc] = await db
+      .insert(media)
+      .values([
+        { providerId: lk('media_provider', 'cloudinary'), kindId: lk('media_kind', 'image'), url: 'https://res.cloudinary.com/demo/image/upload/team.jpg' },
+        { providerId: lk('media_provider', 'cloudinary'), kindId: lk('media_kind', 'pdf'), url: 'https://res.cloudinary.com/demo/raw/upload/letter.pdf' },
+      ])
+      .returning({ id: media.id });
+    const other = await lookupIdOf(db, 'link_type', 'other');
+
+    const createRes = await app.request(
+      '/v1/admin/experiences',
+      json(ownerCookie, 'POST', {
+        organizationId: orgId,
+        roleEn: 'Software Engineer',
+        employmentTypeId: await lookupIdOf(db, 'employment_type', 'full_time'),
+        startDate: '2025-07-01',
+        media: [{ mediaId: photo!.id, captionEn: 'Client meeting' }, { mediaId: doc!.id }],
+        links: [{ typeId: other, label: 'Article', url: 'https://example.com/a' }],
+      }),
+      env,
+    );
+    expect(createRes.status).toBe(201);
+    const { data: created } = (await createRes.json()) as { data: Record<string, unknown> & { id: string } };
+    expect(created.media).toEqual([
+      { mediaId: photo!.id, captionEn: 'Client meeting', captionId: null },
+      { mediaId: doc!.id, captionEn: null, captionId: null },
+    ]);
+    await app.request(`/v1/admin/experiences/${created.id}/publish`, bare(ownerCookie, 'POST'), env);
+
+    const res = await app.request('/v1/site', {}, env);
+    const { data } = (await res.json()) as { data: { experiences: Record<string, unknown>[] } };
+    expect(data.experiences.find((e) => e.id === created.id)).toMatchObject({
+      links: [{ label: 'Article', url: 'https://example.com/a', type: { code: 'other' } }],
+      attachments: [
+        { id: photo!.id, kind: 'image', caption: 'Client meeting' },
+        { id: doc!.id, kind: 'pdf', caption: null },
+      ],
+    });
+  });
+
   it('replaces only the child collections sent on update', async () => {
     const demo = await lookupIdOf(db, 'link_type', 'demo');
     const createRes = await app.request(

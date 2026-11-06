@@ -358,6 +358,8 @@ export function toExperience(
     responsibilities: BulletRow[];
     achievements: BulletRow[];
     projects: PublicProjectRef[];
+    links: RawExtras['links'];
+    media: RawExtras['media'];
   },
 ) {
   return {
@@ -374,6 +376,7 @@ export function toExperience(
     achievements: toBullets(related.achievements, ctx.locale),
     technologies: related.technologies.map(toTechChip),
     projects: related.projects,
+    ...toLinksAndAttachments(ctx, related.links, related.media),
   };
 }
 
@@ -393,17 +396,29 @@ export function toEducation(row: EducationRow, ctx: SerializeContext, activities
 }
 
 /** Achievements, tools/skills, links and attachments (images, PDFs) of one certificate or activity. */
+/** Links and attachments (images, PDFs, videos) of one parent row; rows must already belong to it. */
+export function toLinksAndAttachments(
+  ctx: SerializeContext,
+  links: RawExtras['links'],
+  media: RawExtras['media'],
+) {
+  const sorted = <T extends { sortOrder: number }>(rows: T[]) => [...rows].sort((a, b) => a.sortOrder - b.sortOrder);
+  return {
+    links: sorted(links).map((l) => toProjectLink(l, ctx)),
+    attachments: sorted(media).flatMap((relation) => {
+      const m = toMedia(ctx.media.get(relation.mediaId), ctx);
+      return m ? [{ ...m, caption: pickLocale(relation, 'caption', ctx.locale) }] : [];
+    }),
+  };
+}
+
 export function toExtras(ctx: SerializeContext, parentId: string, extras: RawExtras) {
   const own = <T extends { parentId: string; sortOrder: number }>(rows: T[]) =>
     rows.filter((r) => r.parentId === parentId).sort((a, b) => a.sortOrder - b.sortOrder);
   return {
     achievements: toBullets(own(extras.achievements), ctx.locale),
     technologies: own(extras.technologies).map((t) => toTechChip(t.tech)),
-    links: own(extras.links).map((l) => toProjectLink(l, ctx)),
-    attachments: own(extras.media).flatMap((relation) => {
-      const m = toMedia(ctx.media.get(relation.mediaId), ctx);
-      return m ? [{ ...m, caption: pickLocale(relation, 'caption', ctx.locale) }] : [];
-    }),
+    ...toLinksAndAttachments(ctx, own(extras.links), own(extras.media)),
   };
 }
 

@@ -22,6 +22,8 @@ import {
   experienceAchievements,
   experienceProjects,
   experienceResponsibilities,
+  experienceLinks,
+  experienceMedia,
   experiences,
   experienceTechnologies,
   organizations,
@@ -102,6 +104,19 @@ const bullets = (key: string, table: PgTable, parentKey: string): ChildSpec => (
   sorted: true,
 });
 
+/** Links and attachments (images, PDFs) of one parent row. */
+const linksAndMedia = (links: PgTable, media: PgTable): ChildSpec[] => [
+  {
+    key: 'links',
+    table: links,
+    parentKey: 'parentId',
+    fields: ['typeId', 'label', 'url', 'isPrivate'],
+    sorted: true,
+    lookupFields: { typeId: 'link_type' },
+  },
+  { key: 'media', table: media, parentKey: 'parentId', fields: ['mediaId', 'captionEn', 'captionId'], sorted: true },
+];
+
 /** Achievements, tools/skills, links and attachments shared by certificates and activities. */
 const portfolioExtras = (
   achievements: PgTable,
@@ -112,15 +127,7 @@ const portfolioExtras = (
 ): ChildSpec[] => [
   bullets('achievements', achievements, achievementsKey),
   { key: 'technologies', table: techs, parentKey: 'parentId', fields: ['technologyId'], sorted: true },
-  {
-    key: 'links',
-    table: links,
-    parentKey: 'parentId',
-    fields: ['typeId', 'label', 'url', 'isPrivate'],
-    sorted: true,
-    lookupFields: { typeId: 'link_type' },
-  },
-  { key: 'media', table: media, parentKey: 'parentId', fields: ['mediaId', 'captionEn', 'captionId'], sorted: true },
+  ...linksAndMedia(links, media),
 ];
 
 export const RESOURCE_REGISTRY: Record<ResourceName, ResourceConfig> = {
@@ -224,6 +231,7 @@ export const RESOURCE_REGISTRY: Record<ResourceName, ResourceConfig> = {
         fields: ['projectId'],
         sorted: true,
       },
+      ...linksAndMedia(experienceLinks, experienceMedia),
     ],
     searchKeys: ['roleEn', 'roleId', 'location'],
     revalidateTags: () => ['site', 'projects'],
