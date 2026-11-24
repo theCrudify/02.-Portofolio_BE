@@ -8,7 +8,7 @@ export class CreateMediaController extends BaseController {
     const dto = await this.parseBody(c, createMediaBodySchema, 'Invalid media registration payload');
     const user = c.get('user')!;
     const service = new CreateMediaService(this.getDb(c));
-    const created = await service.execute(dto, user.id);
+    const created = await service.execute(dto, user.id, c.env);
     return this.created(c, created);
   };
 }

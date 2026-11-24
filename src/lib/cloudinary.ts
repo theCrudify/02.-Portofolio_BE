@@ -91,6 +91,31 @@ export async function signUpload(env: Env, kind: string, timestamp?: number) {
   };
 }
 
+/** Never expires in practice (year 2100); matches the PDFs already stored. */
+const DOWNLOAD_EXPIRES_AT = 4102444800;
+
+/**
+ * The account blocks public delivery of raw files (PDFs, decks): `res.cloudinary.com/.../raw/upload/...`
+ * answers 401 "deny or ACL failure". A signed `raw/download` URL is served, so store that instead.
+ */
+export async function signedRawDownloadUrl(env: Env, publicId: string, timestamp?: number): Promise<string> {
+  if (!env.CLOUDINARY_API_SECRET || !env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY) {
+    throw new AppError(500, 'INTERNAL_ERROR', 'Server misconfigured');
+  }
+  const ts = timestamp ?? Math.floor(Date.now() / 1000);
+  const params = { expires_at: DOWNLOAD_EXPIRES_AT, public_id: publicId, timestamp: ts, type: 'upload' };
+  const signature = await signCloudinaryParams(params, env.CLOUDINARY_API_SECRET);
+  const qs = new URLSearchParams({
+    public_id: publicId,
+    type: 'upload',
+    timestamp: String(ts),
+    expires_at: String(DOWNLOAD_EXPIRES_AT),
+    api_key: env.CLOUDINARY_API_KEY,
+    signature,
+  });
+  return `https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/raw/download?${qs}`;
+}
+
 export function validateRegisteredMedia(input: {
   kind: string;
   bytes?: number | null;

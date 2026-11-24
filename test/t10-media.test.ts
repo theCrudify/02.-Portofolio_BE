@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { setTestDb, type DbClient } from '@/db/client';
 import { lk } from '@/db/queries/lookups';
 import { media, projects, users } from '@/db/schema';
@@ -164,6 +165,12 @@ describe('T10 · Media Library, Cloudinary Signature, Video Embed & 409 Usage Pr
       publicId: 'portfolio/docs/cv',
       url: 'https://res.cloudinary.com/demo/raw/upload/cv.pdf',
     });
+
+    const pdf = await db.select({ url: media.url }).from(media).where(eq(media.publicId, 'portfolio/docs/cv'));
+    // Stored as a signed download link: the public raw/upload URL is blocked by the account.
+    expect(pdf[0]!.url).toMatch(
+      /^https:\/\/api\.cloudinary\.com\/v1_1\/my-cloud\/raw\/download\?public_id=portfolio%2Fdocs%2Fcv&type=upload&timestamp=\d+&expires_at=4102444800&api_key=my-key&signature=[0-9a-f]{40}$/,
+    );
 
     const listRes = await app.request('/v1/admin/media?kind=image', { headers: { Cookie: ownerCookie } }, env);
     expect(listRes.status).toBe(200);
