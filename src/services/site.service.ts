@@ -180,7 +180,10 @@ export function serializeCollections(raw: RawSiteData, ctx: SerializeContext) {
       }),
     ),
     education: raw.educationRows.map((edu) =>
-      toEducation(edu, ctx, byParent(raw.eduActivityRows, 'educationId', edu.id)),
+      toEducation(edu, ctx, byParent(raw.eduActivityRows, 'educationId', edu.id), {
+        links: byParent(raw.eduLinkRows, 'parentId', edu.id),
+        media: byParent(raw.eduMediaRows, 'parentId', edu.id),
+      }),
     ),
     certifications: raw.certRows.map((cert) => toCertification(cert, ctx, raw.certExtras)),
     activities: raw.activityRows.map((act) => toActivity(act, ctx, raw.activityExtras)),

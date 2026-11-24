@@ -40,6 +40,8 @@ export interface RawSiteData {
   expLinkRows: Row<typeof schema.experienceLinks>[];
   expMediaRows: Row<typeof schema.experienceMedia>[];
   eduActivityRows: Row<typeof schema.educationActivities>[];
+  eduLinkRows: Row<typeof schema.educationLinks>[];
+  eduMediaRows: Row<typeof schema.educationMedia>[];
   certExtras: RawExtras;
   activityExtras: RawExtras;
   achievementExtras: RawExtras;
@@ -122,6 +124,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       expLinkRows,
       expMediaRows,
       eduActivityRows,
+      eduLinkRows,
+      eduMediaRows,
       certExtras,
       activityExtras,
       achievementExtras,
@@ -170,6 +174,12 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       educationIds.length
         ? db.select().from(schema.educationActivities).where(inArray(schema.educationActivities.educationId, educationIds))
         : none,
+      educationIds.length
+        ? db.select().from(schema.educationLinks).where(inArray(schema.educationLinks.parentId, educationIds))
+        : none,
+      educationIds.length
+        ? db.select().from(schema.educationMedia).where(inArray(schema.educationMedia.parentId, educationIds))
+        : none,
       fetchExtras(db, 'certification', certRows.map((c) => c.id)),
       fetchExtras(db, 'activity', activityIds),
       fetchExtras(db, 'achievement', achievementRows.map((a) => a.id)),
@@ -206,6 +216,8 @@ export class DrizzleSiteRepository extends BaseRepository implements ISiteReposi
       expLinkRows,
       expMediaRows,
       eduActivityRows,
+      eduLinkRows,
+      eduMediaRows,
       certExtras,
       activityExtras,
       achievementExtras,

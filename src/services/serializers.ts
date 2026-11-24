@@ -380,7 +380,12 @@ export function toExperience(
   };
 }
 
-export function toEducation(row: EducationRow, ctx: SerializeContext, activities: BulletRow[]) {
+export function toEducation(
+  row: EducationRow,
+  ctx: SerializeContext,
+  activities: BulletRow[],
+  extras: { links: RawExtras['links']; media: RawExtras['media'] },
+) {
   return {
     id: row.id,
     organization: toOrganization(ctx, row.organizationId),
@@ -392,6 +397,7 @@ export function toEducation(row: EducationRow, ctx: SerializeContext, activities
     gpaScale: row.gpaScale ?? null,
     description: pickLocale(row, 'description', ctx.locale),
     activities: toBullets(activities, ctx.locale),
+    ...toLinksAndAttachments(ctx, extras.links, extras.media),
   };
 }
 

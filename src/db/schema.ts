@@ -706,6 +706,10 @@ export const achievementTechnologies = techTable(
 export const experienceLinks = linkTable('experience_links', 'experience_id', () => experiences.id);
 export const experienceMedia = mediaTable('experience_media', 'experience_id', () => experiences.id);
 
+// Attachments (diploma, transcript, photos) and links of an education entry.
+export const educationLinks = linkTable('education_links', 'education_id', () => education.id);
+export const educationMedia = mediaTable('education_media', 'education_id', () => education.id);
+
 export const publications = pgTable(
   'publications',
   {

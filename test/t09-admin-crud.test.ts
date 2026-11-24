@@ -272,6 +272,46 @@ describe('T09 · Admin CRUD, Status Transitions, Role Restrictions & Revalidate'
     });
   });
 
+  it('saves a diploma PDF, photos and links on an education entry and shows them in the site payload', async () => {
+    const orgId = await insertOrganization(db, { name: 'State University' });
+    const [photo, diploma] = await db
+      .insert(media)
+      .values([
+        { providerId: lk('media_provider', 'cloudinary'), kindId: lk('media_kind', 'image'), url: 'https://res.cloudinary.com/demo/image/upload/graduation.jpg' },
+        { providerId: lk('media_provider', 'cloudinary'), kindId: lk('media_kind', 'pdf'), url: 'https://res.cloudinary.com/demo/raw/upload/diploma.pdf' },
+      ])
+      .returning({ id: media.id });
+    const other = await lookupIdOf(db, 'link_type', 'other');
+
+    const createRes = await app.request(
+      '/v1/admin/education',
+      json(ownerCookie, 'POST', {
+        organizationId: orgId,
+        degree: 'Bachelor of Computer Science',
+        media: [{ mediaId: diploma!.id, captionEn: 'Diploma' }, { mediaId: photo!.id }],
+        links: [{ typeId: other, label: 'Thesis', url: 'https://example.com/thesis' }],
+      }),
+      env,
+    );
+    expect(createRes.status).toBe(201);
+    const { data: created } = (await createRes.json()) as { data: Record<string, unknown> & { id: string } };
+    expect(created.media).toEqual([
+      { mediaId: diploma!.id, captionEn: 'Diploma', captionId: null },
+      { mediaId: photo!.id, captionEn: null, captionId: null },
+    ]);
+    await app.request(`/v1/admin/education/${created.id}/publish`, bare(ownerCookie, 'POST'), env);
+
+    const res = await app.request('/v1/site', {}, env);
+    const { data } = (await res.json()) as { data: { education: Record<string, unknown>[] } };
+    expect(data.education.find((e) => e.id === created.id)).toMatchObject({
+      links: [{ label: 'Thesis', url: 'https://example.com/thesis', type: { code: 'other' } }],
+      attachments: [
+        { id: diploma!.id, kind: 'pdf', caption: 'Diploma' },
+        { id: photo!.id, kind: 'image', caption: null },
+      ],
+    });
+  });
+
   it('replaces only the child collections sent on update', async () => {
     const demo = await lookupIdOf(db, 'link_type', 'demo');
     const createRes = await app.request(

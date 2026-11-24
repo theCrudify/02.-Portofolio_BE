@@ -36,6 +36,13 @@
       "when": 1793963105467,
       "tag": "0004_experience_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794049505467,
+      "tag": "0005_education_attachments",
+      "breakpoints": true
     }
   ]
 }

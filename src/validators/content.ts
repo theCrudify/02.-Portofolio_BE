@@ -190,6 +190,8 @@ const educationFields = {
   descriptionId: optText(),
   sortOrder,
   activities: childSchemas.activities.optional(),
+  links: childSchemas.links.optional(),
+  media: childSchemas.attachments.optional(),
 };
 export const educationSchema = z.object(educationFields);
 
