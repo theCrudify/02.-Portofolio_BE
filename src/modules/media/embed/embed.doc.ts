@@ -5,7 +5,7 @@ export const embedMediaRouteDoc = createRoute({
   method: 'post',
   path: '/v1/admin/media/embed',
   tags: ['Admin Media'],
-  summary: 'Register embedded YouTube or Vimeo video',
+  summary: 'Register embedded YouTube, Vimeo, Loom or Google Drive video',
   request: {
     body: { content: { 'application/json': { schema: embedMediaBodySchema } } },
   },

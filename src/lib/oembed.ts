@@ -1,13 +1,14 @@
 import { AppError } from './errors';
 
-export type VideoEmbedProvider = 'youtube' | 'vimeo' | 'loom';
+export type VideoEmbedProvider = 'youtube' | 'vimeo' | 'loom' | 'google_drive';
 
 export interface ParsedVideoEmbed {
   provider: VideoEmbedProvider;
   embedId: string;
   canonicalUrl: string;
   defaultThumbnailUrl: string | null;
-  oembedEndpoint: string;
+  /** null: the provider has no oEmbed API (Google Drive). */
+  oembedEndpoint: string | null;
 }
 
 export function parseVideoUrl(rawUrl: string): ParsedVideoEmbed {
@@ -83,10 +84,26 @@ export function parseVideoUrl(rawUrl: string): ParsedVideoEmbed {
     };
   }
 
+  // Google Drive: drive.google.com/file/d/{id}/view or drive.google.com/open?id={id}
+  if (host === 'drive.google.com') {
+    const parts = u.pathname.split('/').filter(Boolean);
+    const id = parts[0] === 'file' && parts[1] === 'd' ? (parts[2] ?? null) : u.searchParams.get('id');
+    if (!id || !/^[A-Za-z0-9_-]{20,64}$/.test(id)) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Could not extract valid Google Drive file ID.');
+    }
+    return {
+      provider: 'google_drive',
+      embedId: id,
+      canonicalUrl: `https://drive.google.com/file/d/${id}/view`,
+      defaultThumbnailUrl: null,
+      oembedEndpoint: null,
+    };
+  }
+
   throw new AppError(
     400,
     'VALIDATION_ERROR',
-    'Unsupported video provider. Allowed providers: YouTube, Vimeo, Loom.'
+    'Unsupported video provider. Allowed providers: YouTube, Vimeo, Loom, Google Drive.'
   );
 }
 
@@ -104,8 +121,8 @@ export async function resolveVideoEmbed(rawUrl: string): Promise<{
   let durationSec: number | null = null;
 
   try {
-    const res = await fetch(parsed.oembedEndpoint);
-    if (res.ok) {
+    const res = parsed.oembedEndpoint ? await fetch(parsed.oembedEndpoint) : null;
+    if (res?.ok) {
       const data = (await res.json()) as {
         title?: string;
         thumbnail_url?: string;

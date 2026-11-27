@@ -101,6 +101,7 @@ export const LOOKUP_SEED: LookupSeedGroup[] = [
       sys('youtube', 'YouTube', undefined, { icon: 'youtube' }),
       sys('vimeo', 'Vimeo', undefined, { icon: 'vimeo' }),
       sys('loom', 'Loom', undefined, { icon: 'loom' }),
+      sys('google_drive', 'Google Drive', undefined, { icon: 'googledrive' }),
     ],
   },
   {

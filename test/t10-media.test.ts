@@ -100,6 +100,11 @@ describe('T10 · Media Library, Cloudinary Signature, Video Embed & 409 Usage Pr
     expect(loom.provider).toBe('loom');
     expect(loom.embedId).toBe('1234567890abcdef1234567890abcdef');
 
+    const drive = parseVideoUrl('https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view?usp=sharing');
+    expect(drive.provider).toBe('google_drive');
+    expect(drive.embedId).toBe('1AbCdEfGhIjKlMnOpQrStUvWxYz012345');
+    expect(() => parseVideoUrl('https://drive.google.com/drive/folders/abc')).toThrow();
+
     expect(() => parseVideoUrl('https://example.com/video.mp4')).toThrow();
   });
 
