@@ -1,4 +1,4 @@
-import { desc, eq, isNull } from 'drizzle-orm';
+import { count, desc, eq, isNull } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { Database } from '../db/client';
 import { loadLookups } from '../db/queries/lookups';
@@ -171,7 +171,8 @@ export async function updateAdminSiteSettings(
 /* ---------- dashboard ---------- */
 
 export async function getAdminDashboardSummary(db: Database) {
-  const [allProjects, allCerts, allMessages, recentLogs, lookups] = await Promise.all([
+  const resourceNames = Object.keys(RESOURCE_REGISTRY) as (keyof typeof RESOURCE_REGISTRY)[];
+  const [allProjects, allCerts, allMessages, recentLogs, lookups, ...statusCounts] = await Promise.all([
     selectWithStatus(db, RESOURCE_REGISTRY.projects.table).where(
       isNull(RESOURCE_REGISTRY.projects.table.deletedAt),
     ) as Promise<{ status: string }[]>,
@@ -179,6 +180,14 @@ export async function getAdminDashboardSummary(db: Database) {
     db.select().from(messages),
     db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(10),
     loadLookups(db),
+    ...resourceNames.map((name) => {
+      const t = RESOURCE_REGISTRY[name].table;
+      return db
+        .select({ statusId: t.statusId, n: count() })
+        .from(t)
+        .where(isNull(t.deletedAt))
+        .groupBy(t.statusId);
+    }),
   ]);
 
   const now = new Date();
@@ -195,5 +204,13 @@ export async function getAdminDashboardSummary(db: Database) {
       (c) => c.expiryDate && c.expiryDate >= todayStr && c.expiryDate <= in30Days,
     ),
     recentAuditLogs: recentLogs.map((log) => ({ ...log, action: lookups.code(log.actionId) ?? '' })),
+    content: resourceNames.map((resource, i) => {
+      const byStatus = { published: 0, draft: 0, archived: 0 };
+      for (const row of statusCounts[i] ?? []) {
+        const code = lookups.code(row.statusId) as keyof typeof byStatus | undefined;
+        if (code && code in byStatus) byStatus[code] += Number(row.n);
+      }
+      return { resource, ...byStatus };
+    }),
   };
 }

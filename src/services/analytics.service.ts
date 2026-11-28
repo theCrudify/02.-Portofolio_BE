@@ -2,7 +2,7 @@ import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import type { Database } from '../db/client';
 import { paginate, type PaginateInput } from '../db/queries/common';
 import { loadLookups, type WithSql } from '../db/queries/lookups';
-import { dailyStats, events, githubCache, loginAttempts, messages, shareLinks } from '../db/schema';
+import { dailyStats, events, githubCache, loginAttempts, messages, projects, shareLinks } from '../db/schema';
 import { revalidate } from '../lib/revalidate';
 import type { Env } from '../types/env';
 
@@ -154,54 +154,176 @@ export async function runNightlyCron(db: Database, env: Env, referenceNow = new 
   return agg;
 }
 
-export async function getAdminAnalytics(db: Database, range: '7d' | '30d' | '90d' = '30d') {
-  const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
-  const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+type Breakdown = { key: string; count: number }[];
 
-  const [stats, lookups] = await Promise.all([
-    db.select().from(dailyStats).where(gte(dailyStats.date, sinceDate)),
+/** Count map -> top-N list, largest first. */
+function top(map: Map<string, number>, n = 10): Breakdown {
+  return [...map.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, n);
+}
+
+function bump(map: Map<string, number>, key: string) {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+function referrerHost(ref: string | null) {
+  if (!ref) return 'Direct / none';
+  try {
+    return new URL(ref).hostname.replace(/^www\./, '') || 'Direct / none';
+  } catch {
+    return ref.slice(0, 60);
+  }
+}
+
+interface PeriodTotals {
+  views: number;
+  visitors: number;
+  cvDownloads: number;
+  linkClicks: number;
+  shareOpens: number;
+  videoPlays: number;
+  messages: number;
+}
+
+/**
+ * Reads raw events (kept 90 days by the nightly cron) instead of daily_stats, so today's traffic
+ * shows up immediately and visitors are counted once per day across all pages.
+ * Visitor hashes rotate daily, so "visitors" = sum of daily unique visitors.
+ * shortcut: loads the range's events into memory; move to SQL GROUP BY if traffic grows past ~100k events/90d.
+ */
+export async function getAdminAnalytics(
+  db: Database,
+  range: '7d' | '30d' | '90d' = '30d',
+  now = new Date(),
+) {
+  const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
+  const DAY = 24 * 60 * 60 * 1000;
+  const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const since = new Date(todayStart - (days - 1) * DAY);
+  // Raw events only go back 90 days, so a 90d range has no previous period to compare with.
+  const prevSince = days < 90 ? new Date(since.getTime() - days * DAY) : since;
+
+  const [rows, msgRows, projectRows, lookups] = await Promise.all([
+    db
+      .select({
+        typeId: events.typeId,
+        path: events.path,
+        localeId: events.localeId,
+        projectId: events.projectId,
+        target: events.target,
+        visitorHash: events.visitorHash,
+        country: events.country,
+        referrer: events.referrer,
+        utmSource: events.utmSource,
+        device: events.device,
+        createdAt: events.createdAt,
+      })
+      .from(events)
+      .where(gte(events.createdAt, prevSince)),
+    db.select({ createdAt: messages.createdAt }).from(messages).where(gte(messages.createdAt, prevSince)),
+    db.select({ id: projects.id, title: projects.titleEn, slug: projects.slug }).from(projects),
     loadLookups(db),
   ]);
 
-  let totalViews = 0;
-  let uniqueVisitors = 0;
-  let cvDownloads = 0;
+  const emptyTotals = (): PeriodTotals => ({
+    views: 0, visitors: 0, cvDownloads: 0, linkClicks: 0, shareOpens: 0, videoPlays: 0, messages: 0,
+  });
+  const current = emptyTotals();
+  const previous = emptyTotals();
 
-  const byDate = new Map<string, { date: string; views: number; visitors: number }>();
-  const byPath = new Map<string, number>();
+  const series = new Map<string, { date: string; views: number; visitors: number; hashes: Set<string> }>();
+  for (let i = 0; i < days; i++) {
+    const date = new Date(since.getTime() + i * DAY).toISOString().slice(0, 10);
+    series.set(date, { date, views: 0, visitors: 0, hashes: new Set() });
+  }
+  const prevHashesByDay = new Map<string, Set<string>>();
 
-  for (const row of stats) {
-    const type = lookups.code(row.typeId);
+  const pages = new Map<string, number>();
+  const projectViews = new Map<string, number>();
+  const referrers = new Map<string, number>();
+  const countries = new Map<string, number>();
+  const devices = new Map<string, number>();
+  const locales = new Map<string, number>();
+  const campaigns = new Map<string, number>();
+  const clicks = new Map<string, number>();
+  const eventTypes = new Map<string, number>();
+
+  const sinceMs = since.getTime();
+  for (const ev of rows) {
+    const t = new Date(ev.createdAt).getTime();
+    const date = new Date(t).toISOString().slice(0, 10);
+    const type = lookups.code(ev.typeId) ?? 'unknown';
+    const isCurrent = t >= sinceMs;
+    const totals = isCurrent ? current : previous;
+
     if (type === 'page_view') {
-      totalViews += row.count;
-      uniqueVisitors += row.uniqueVisitors;
-      const entry = byDate.get(row.date) ?? { date: row.date, views: 0, visitors: 0 };
-      entry.views += row.count;
-      entry.visitors += row.uniqueVisitors;
-      byDate.set(row.date, entry);
-      byPath.set(row.path, (byPath.get(row.path) ?? 0) + row.count);
-    }
-    if (type === 'cv_download' || type === 'export_download') {
-      cvDownloads += row.count;
-    }
+      totals.views++;
+      if (isCurrent) {
+        const day = series.get(date);
+        if (day) {
+          day.views++;
+          day.hashes.add(ev.visitorHash);
+        }
+      } else {
+        const set = prevHashesByDay.get(date) ?? new Set<string>();
+        set.add(ev.visitorHash);
+        prevHashesByDay.set(date, set);
+      }
+    } else if (type === 'cv_download' || type === 'export_download') totals.cvDownloads++;
+    else if (type === 'link_click') totals.linkClicks++;
+    else if (type === 'share_open') totals.shareOpens++;
+    else if (type === 'video_play') totals.videoPlays++;
+
+    if (!isCurrent) continue;
+    bump(eventTypes, type);
+    if (type === 'link_click' && ev.target) bump(clicks, ev.target);
+    if (type !== 'page_view') continue;
+    bump(pages, ev.path);
+    if (ev.projectId) bump(projectViews, ev.projectId);
+    bump(referrers, referrerHost(ev.referrer));
+    bump(countries, ev.country ?? '??');
+    bump(devices, ev.device ?? 'unknown');
+    bump(locales, (ev.localeId && lookups.code(ev.localeId)) || 'unknown');
+    if (ev.utmSource) bump(campaigns, ev.utmSource);
   }
 
+  for (const day of series.values()) {
+    day.visitors = day.hashes.size;
+    current.visitors += day.visitors;
+  }
+  for (const set of prevHashesByDay.values()) previous.visitors += set.size;
+  for (const m of msgRows) {
+    if (new Date(m.createdAt).getTime() >= sinceMs) current.messages++;
+    else previous.messages++;
+  }
 
-  const allMessages = await db.select().from(messages);
+  const projectById = new Map(projectRows.map((p) => [p.id, p]));
 
   return {
     range,
+    since: since.toISOString().slice(0, 10),
     totals: {
-      views: totalViews,
-      uniqueVisitors,
-      cvDownloads,
-      contactSubmissions: allMessages.length,
+      ...current,
+      // Kept for older clients.
+      uniqueVisitors: current.visitors,
+      contactSubmissions: current.messages,
     },
-    series: Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)),
-    topPaths: Array.from(byPath.entries())
-      .map(([path, count]) => ({ path, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10),
+    previous: days < 90 ? previous : null,
+    series: [...series.values()].map(({ date, views, visitors }) => ({ date, views, visitors })),
+    topPaths: top(pages).map(({ key, count }) => ({ path: key, count })),
+    topProjects: top(projectViews).map(({ key, count }) => ({
+      key: projectById.get(key)?.title ?? projectById.get(key)?.slug ?? 'Deleted project',
+      count,
+    })),
+    referrers: top(referrers),
+    countries: top(countries),
+    devices: top(devices),
+    locales: top(locales),
+    campaigns: top(campaigns),
+    clicks: top(clicks),
+    eventTypes: top(eventTypes),
   };
 }
 
